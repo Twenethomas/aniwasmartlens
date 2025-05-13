@@ -1,5 +1,7 @@
-> A cross‑platform Flutter app providing vision‑enabled accessibility features  
-> for visually impaired users and their caregivers.
+# AssistLens
+
+A cross‑platform Flutter app providing vision‑enabled accessibility features  
+for visually impaired users and their caregivers.
 
 ![Flutter Version](https://img.shields.io/badge/flutter-3.7.2-blue)  
 ![Dart Version](https://img.shields.io/badge/dart-3.1.5-blue)  
