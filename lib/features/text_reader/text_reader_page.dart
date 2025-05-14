@@ -333,27 +333,30 @@ class _TextReaderPageState extends State<TextReaderPage> {
   Future<void> _speakText() async {
     if (_recognizedText.isEmpty) return;
 
-    if (_ttsLanguageCode != _mapLanguageCode(_ocrLanguageCode)) {
+    if (_autoTranslateToSystem &&
+        _ttsLanguageCode != _mapLanguageCode(_ocrLanguageCode) &&
+        _translatedText.isNotEmpty) {
+      // Speak translated text if auto-translate is on and translation exists
+      await _tts.speak(_translatedText);
+    } else if (_autoTranslateToSystem &&
+        _ttsLanguageCode != _mapLanguageCode(_ocrLanguageCode)) {
+      // Translate and speak if auto-translate is on but no translation exists
       setState(() => _busy = true);
-
       try {
         final translatedText = await translateText(
           text: _recognizedText,
           sourceLang: _ocrLanguageCode,
           targetLang: _ttsLanguageCode,
         );
-
         setState(() => _translatedText = translatedText);
         await _tts.speak(translatedText);
       } catch (e) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Translation failed: $e')));
         await _tts.speak(_recognizedText); // Fallback to original
       } finally {
         setState(() => _busy = false);
       }
     } else {
+      // Speak original text when auto-translate is off
       await _tts.speak(_recognizedText);
     }
   }
@@ -522,13 +525,8 @@ class _TextReaderPageState extends State<TextReaderPage> {
                       ),
                     ),
                     const SizedBox(width: 12),
-FloatingActionButton(
-  heroTag: 'upload',
-  onPressed: _busy ? null : _uploadImage,
-  child: const Icon(Icons.file_upload),
-),
 
-                   FloatingActionButton(
+                    FloatingActionButton(
                       heroTag: 'speak',
                       onPressed:
                           _recognizedText.isEmpty || _busy ? null : _speakText,
@@ -565,6 +563,15 @@ FloatingActionButton(
                       onPressed: _busy ? null : _resetCamera,
                       backgroundColor: Colors.white70,
                       child: const Icon(Icons.refresh, color: Colors.black87),
+                    ),
+                    FloatingActionButton(
+                      heroTag: 'translate',
+                      onPressed:
+                          _recognizedText.isEmpty || _busy
+                              ? null
+                              : _showTranslationDialog,
+                      backgroundColor: Colors.white70,
+                      child: const Icon(Icons.translate, color: Colors.black87),
                     ),
                   ],
                 ),
@@ -702,7 +709,6 @@ FloatingActionButton(
             ),
 
           const SizedBox(height: 16),
-
           Expanded(
             child: SingleChildScrollView(
               controller: scrollCtrl,
@@ -719,8 +725,7 @@ FloatingActionButton(
                       height: _lineSpacing,
                     ),
                   ),
-
-                  if (_translatedText.isNotEmpty)
+                  if (_translatedText.isNotEmpty && _autoTranslateToSystem)
                     Column(
                       children: [
                         const SizedBox(height: 16),
@@ -743,7 +748,6 @@ FloatingActionButton(
               ),
             ),
           ),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
@@ -808,6 +812,15 @@ FloatingActionButton(
   }
 
   Future<void> _showLanguageSelectionDialog() async {
+    final langMap = {
+      'eng': 'en-US',
+      'spa': 'es-ES',
+      'fra': 'fr-FR',
+      'deu': 'de-DE',
+      'ita': 'it-IT',
+      'por': 'pt-BR',
+    };
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -828,7 +841,6 @@ FloatingActionButton(
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 16),
-
                     Row(
                       children: [
                         const Icon(Icons.auto_fix_high),
@@ -839,17 +851,11 @@ FloatingActionButton(
                           value: _autoDetectLanguage,
                           onChanged: (value) async {
                             setState(() => _autoDetectLanguage = value);
-                            await _saveLanguagePreference(
-                              ocrLang: _ocrLanguageCode,
-                              ttsLang: _ttsLanguageCode,
-                              autoDetect: value,
-                              autoTranslate: _autoTranslateToSystem,
-                            );
+                            await _saveSettings(autoDetect: value);
                           },
                         ),
                       ],
                     ),
-
                     Row(
                       children: [
                         const Icon(Icons.translate),
@@ -859,20 +865,22 @@ FloatingActionButton(
                         Switch(
                           value: _autoTranslateToSystem,
                           onChanged: (value) async {
-                            setState(() => _autoTranslateToSystem = value);
-                            await _saveLanguagePreference(
-                              ocrLang: _ocrLanguageCode,
-                              ttsLang: _ttsLanguageCode,
-                              autoDetect: _autoDetectLanguage,
-                              autoTranslate: value,
-                            );
+                            setState(() {
+                              _autoTranslateToSystem = value;
+                              if (!value) {
+                                _translatedText = '';
+                              }
+                            });
+                            await _saveSettings(autoTranslate: value);
+
+                            if (value && _recognizedText.isNotEmpty) {
+                              _speakText(); // Auto-translate if enabled
+                            }
                           },
                         ),
                       ],
                     ),
-
                     const Divider(height: 32),
-
                     Text(
                       'OCR Language',
                       style: Theme.of(context).textTheme.titleMedium,
@@ -886,7 +894,6 @@ FloatingActionButton(
                             index,
                           );
                           final name = _supportedLanguages[code]!;
-
                           return ListTile(
                             title: Text(name),
                             trailing:
@@ -898,16 +905,55 @@ FloatingActionButton(
                                     : const Icon(Icons.radio_button_unchecked),
                             onTap: () async {
                               setState(() => _ocrLanguageCode = code);
-                              await _saveLanguagePreference(
-                                ocrLang: code,
-                                ttsLang: _mapLanguageCode(code),
-                                autoDetect: _autoDetectLanguage,
-                                autoTranslate: _autoTranslateToSystem,
-                              );
+                              await _saveSettings(ocrLang: code);
                               Navigator.pop(context);
 
                               if (_recognizedText.isNotEmpty) {
-                                _speakText(); // Re-process with new language
+                                if (_autoTranslateToSystem) {
+                                  _speakText(); // Auto-translate if enabled
+                                } else {
+                                  _tts.setLanguage(_mapLanguageCode(code));
+                                }
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    const Divider(height: 32),
+                    Text(
+                      'TTS Language',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _supportedLanguages.length,
+                        itemBuilder: (context, index) {
+                          final code = _supportedLanguages.keys.elementAt(
+                            index,
+                          );
+                          final ttsCode = langMap[code]!;
+                          final name = _supportedLanguages[code]!;
+                          return ListTile(
+                            title: Text(name),
+                            trailing:
+                                ttsCode == _ttsLanguageCode
+                                    ? const Icon(
+                                      Icons.check_circle,
+                                      color: Colors.green,
+                                    )
+                                    : const Icon(Icons.radio_button_unchecked),
+                            onTap: () async {
+                              setState(() => _ttsLanguageCode = ttsCode);
+                              await _saveSettings(ttsLang: ttsCode);
+                              Navigator.pop(context);
+
+                              if (_recognizedText.isNotEmpty) {
+                                if (_autoTranslateToSystem) {
+                                  _speakText(); // Auto-translate if enabled
+                                } else {
+                                  _tts.setLanguage(ttsCode);
+                                }
                               }
                             },
                           );
@@ -922,55 +968,133 @@ FloatingActionButton(
     );
   }
 
-  Future<void> _saveLanguagePreference({
-    required String ocrLang,
-    required String ttsLang,
-    required bool autoDetect,
-    required bool autoTranslate,
+  Future<void> _saveSettings({
+    String? ocrLang,
+    String? ttsLang,
+    bool? autoDetect,
+    bool? autoTranslate,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('ocr_language', ocrLang);
-    await prefs.setString('tts_language', ttsLang);
-    await prefs.setBool('auto_detect', autoDetect);
-    await prefs.setBool('auto_translate', autoTranslate);
+    if (ocrLang != null) await prefs.setString('ocr_language', ocrLang);
+    if (ttsLang != null) await prefs.setString('tts_language', ttsLang);
+    if (autoDetect != null) await prefs.setBool('auto_detect', autoDetect);
+    if (autoTranslate != null)
+      await prefs.setBool('auto_translate', autoTranslate);
+
+    // Clear translation when auto-translate is turned off
+    if (autoTranslate != null && !autoTranslate) {
+      setState(() => _translatedText = '');
+    }
   }
 
   Future<void> _swapLanguages() async {
-    if (_recognizedText.isNotEmpty && _translatedText.isNotEmpty) {
+    if (_translatedText.isNotEmpty && _autoTranslateToSystem) {
       setState(() {
         final tempText = _recognizedText;
         final tempLang = _ocrLanguageCode;
 
         _recognizedText = _translatedText;
-        _translatedText = tempText;
-        _ocrLanguageCode = tempLang;
+        _ocrLanguageCode = _ttsLanguageCode;
+        _ttsLanguageCode = _mapLanguageCode(tempLang);
+        _translatedText = '';
       });
 
       await _tts.setLanguage(_mapLanguageCode(_ocrLanguageCode));
+
+      if (_autoTranslateToSystem) {
+        final translatedText = await translateText(
+          text: _recognizedText,
+          sourceLang: _ocrLanguageCode,
+          targetLang: _ttsLanguageCode,
+        );
+        setState(() => _translatedText = translatedText);
+      }
     }
   }
-  Future<void> _uploadImage() async {
-  final uploadInput = html.FileUploadInputElement()..accept = 'image/*';
-  uploadInput.click();
-  await uploadInput.onChange.first;
-  final file = uploadInput.files!.first;
 
-  final reader = html.FileReader();
-  reader.readAsDataUrl(file);
-  await reader.onLoad.first;
-  final dataUrl = reader.result as String;
-  final base64 = extractBase64FromDataUrl(dataUrl);
-  
-  if (base64 == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Invalid image format')),
+  Future<void> _showTranslationDialog() async {
+    final supportedLanguages = {
+      'eng': 'English',
+      'spa': 'Español',
+      'fra': 'Français',
+      'deu': 'Deutsch',
+      'ita': 'Italiano',
+      'por': 'Português',
+    };
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder:
+          (context) => DraggableScrollableSheet(
+            initialChildSize: 0.5,
+            maxChildSize: 0.8,
+            builder: (context, scrollController) {
+              return Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  children: [
+                    Text(
+                      'Select Target Language',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: ListView.builder(
+                        controller: scrollController,
+                        itemCount: supportedLanguages.length,
+                        itemBuilder: (context, index) {
+                          final code = supportedLanguages.keys.elementAt(index);
+                          final name = supportedLanguages[code]!;
+                          return ListTile(
+                            title: Text(name),
+                            trailing:
+                                code == _ocrLanguageCode
+                                    ? const Icon(
+                                      Icons.check_circle,
+                                      color: Colors.green,
+                                    )
+                                    : const Icon(Icons.radio_button_unchecked),
+                            onTap: () async {
+                              Navigator.pop(context);
+                              if (code != _ocrLanguageCode) {
+                                setState(() => _busy = true);
+                                try {
+                                  final translatedText = await translateText(
+                                    text: _recognizedText,
+                                    sourceLang: _ocrLanguageCode,
+                                    targetLang: code,
+                                  );
+                                  setState(() {
+                                    _ocrLanguageCode = code;
+                                    _translatedText = translatedText;
+                                  });
+                                  await _tts.setLanguage(
+                                    _mapLanguageCode(code),
+                                  );
+                                } catch (e) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Translation failed: $e'),
+                                    ),
+                                  );
+                                } finally {
+                                  setState(() => _busy = false);
+                                }
+                              }
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
     );
-    return;
   }
-  
-  final service = WebTextReaderService(language: _ocrLanguageCode);
-  final text = await service.recognizeText(base64Image: base64);
-  setState(() => _recognizedText = text);
-}
- 
 }
