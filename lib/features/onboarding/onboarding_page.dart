@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../state/app_state.dart';
+import '../../core/routing/app_router.dart'; // Import AppRouter
 
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key});
@@ -35,13 +36,16 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   Future<void> _finishOnboarding() async {
     // 1. Mark onboarding complete
-    await context.read<AppState>().completeOnboarding();
+    await context.read<AppState>().onboardingComplete;
     // 2. Navigate to Home, replacing this screen
-    Navigator.pushReplacementNamed(context, '/home');
+    Navigator.pushReplacementNamed(context, AppRouter.home);
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     return Scaffold(
       body: Stack(
         children: [
@@ -57,7 +61,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                     flex: 7,
                     child: Image.asset(
                       slides[i]['image']!,
-                      fit: BoxFit.cover,
+                      fit: BoxFit.contain,
                       width: double.infinity,
                     ),
                   ),
@@ -65,9 +69,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
                     flex: 3,
                     child: Container(
                       padding: const EdgeInsets.all(24),
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.vertical(
+                      decoration: BoxDecoration(
+                        color: colorScheme.surface, // Use themed surface color
+                        borderRadius: const BorderRadius.vertical(
                           top: Radius.circular(24),
                         ),
                       ),
@@ -75,14 +79,15 @@ class _OnboardingPageState extends State<OnboardingPage> {
                         children: [
                           Text(
                             slides[i]['title']!,
-                            style: const TextStyle(
-                              fontSize: 24,
+                            style: textTheme.headlineSmall?.copyWith(
                               fontWeight: FontWeight.bold,
+                              color: colorScheme.onSurface,
                             ),
                           ),
                           const SizedBox(height: 12),
                           Text(
                             slides[i]['description']!,
+                            style: textTheme.bodyLarge?.copyWith(color: colorScheme.onSurface.withOpacity(0.8)),
                             textAlign: TextAlign.center,
                           ),
                           const Spacer(),
@@ -99,9 +104,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
                                 height: 8,
                                 decoration: BoxDecoration(
                                   color:
-                                      _currentIndex == idx
-                                          ? Colors.blueAccent
-                                          : Colors.grey.shade300,
+                                      _currentIndex == idx // Themed indicator colors
+                                          ? colorScheme.primary
+                                          : colorScheme.onSurface.withOpacity(0.2),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                               );
@@ -123,15 +128,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
                                         curve: Curves.easeInOut,
                                       ),
                               style: ElevatedButton.styleFrom(
+                                backgroundColor: colorScheme.primary, // Themed button color
+                                foregroundColor: colorScheme.onPrimary, // Themed text color on button
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
                               child: Text(
                                 _currentIndex == slides.length - 1
-                                    ? 'Get Started'
-                                    : 'Next',
-                                style: const TextStyle(fontSize: 16),
+                                    ? 'Get Started' // Themed button text
+                                    : 'Next', // Themed button text
+                                style: textTheme.labelLarge?.copyWith(fontSize: 16),
                               ),
                             ),
                           ),

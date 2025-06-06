@@ -8,8 +8,11 @@ plugins {
 android {
     namespace = "com.example.assist_lens"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
-
+    ndkVersion = "29.0.13113456"
+    aaptOptions {
+        noCompress("tflite")
+        noCompress("lite")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -41,4 +44,8 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+
 }
