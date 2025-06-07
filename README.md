@@ -1,102 +1,99 @@
-Assist Lens: Your Hands-Free AI Companion
-Assist Lens is a cutting-edge mobile application designed to empower visually impaired individuals with enhanced accessibility and independence. Leveraging advanced AI capabilities, the app provides real-time information and assistance through voice commands, visual recognition, and smart navigation.
+# 👁️ Assist Lens: Your Hands-Free AI Companion
 
-Features
-Aniwa AI Chat: Engage in natural language conversations with Aniwa, your intelligent AI assistant, powered by the Gemini API.
+**Assist Lens** is a mobile app designed to help **visually impaired people** live more independently. Using **real-time AI**, **voice control**, and **smart computer vision**, it serves as a hands-free companion.  
+Just say: _**“Hey Assist Lens”**_ to begin.
 
-Voice Control & Hands-Free Operation: Control the app and its features using intuitive voice commands, providing a seamless and accessible user experience.
+---
 
-Text Reader: Instantly recognize and read text from images (OCR), correct errors, and translate content into English.
+## 🌟 Features
 
-Scene Description: Capture a picture of your surroundings and receive a detailed AI-generated description of the scene.
+| 🔹 Feature | 📝 Description |
+|-----------|----------------|
+| 🧠 **Aniwa AI Chat** | Talk to **Aniwa**, your AI assistant powered by **Gemini AI**. Ask anything, get smart, human-like responses. |
+| 🎙️ **Voice Control** | Fully voice-enabled. Control everything with simple voice commands—no touch needed. |
+| 📖 **Text Reader** | Point the camera at any printed material (signs, books, menus) and the app reads it aloud. It can auto-correct recognition errors and translate to English. |
+| 🌄 **Scene Description** | Take a photo and get a natural-language description of what’s in the image. E.g., _“A park with trees and two people walking.”_ |
+| 🧠 **Object Detection** | Recognizes everyday objects in real-time (e.g., “chair,” “dog,” “bottle”). |
+| 🧑‍🤝‍🧑 **Face Recognition** | Identifies familiar faces using your device camera. |
+| 🗺️ **Smart Navigation** | Get voice directions, object distance alerts, and destination notifications using maps and sensors. |
+| 🚨 **Emergency Help** | Quickly alert emergency contacts and share your live GPS location with one tap or command. |
+| 🕓 **Activity History** | Access logs of past chats, AI descriptions, and user interactions. |
+| 🌗 **Day & Night Mode** | Adaptive themes for daylight and low-light conditions—automatically or manually switch. |
 
-Object Detection: Get real-time identification of objects in your camera's view, with AI-powered descriptions on demand.
+---
 
-Facial Recognition: Identify known individuals through your camera, providing information about who is around you.
+## 🛠️ Technology Stack
 
-Smart Navigation: Plan routes, get real-time voice-guided directions, and receive proximity alerts to your destination.
+| 🧩 Technology | 🔧 Description |
+|--------------|----------------|
+| 💙 **Flutter** | Cross-platform mobile framework used for building the app. |
+| 🪄 **Provider** | Lightweight, reactive state management. |
+| 🔍 **Google ML Kit** | On-device OCR, face detection, and object recognition. |
+| 🧠 **Gemini API** | Conversational AI from Google powering Aniwa. |
+| 🗣️ **Speech-to-Text (STT)** | Converts user speech into actionable commands. |
+| 🔊 **Text-to-Speech (TTS)** | Reads back AI responses, recognized text, or scene descriptions. |
+| 🧏 **Picovoice Porcupine** | Lightweight wake-word engine for always-on listening. |
+| 📍 **Geolocator + Flutter Map** | Real-time location tracking and smart voice navigation. |
+| 📷 **Flutter Camera & Permissions** | Camera integration for vision features. |
+| ☁️ **Firebase** | Backend services including real-time database and cloud functions. |
 
-Emergency Assistance: Quickly access emergency contacts and share your location in critical situations.
+---
+## 📂 Project Structure
+```
 
-Activity History: Keep track of your past interactions and information queries.
+```markdown
+assist\_lens/
+├── android/                   # Android-specific code
+├── assets/                    # Images, fonts, AI models
+├── lib/
+│   ├── core/
+│   │   ├── routing/           # Navigation between screens
+│   │   └── services/          # Speech, AI, network helpers
+│   ├── features/              # Core features (chat, camera, etc.)
+│   │   ├── aniwa\_chat/
+│   │   ├── pc\_cam/
+│   │   └── ...
+│   └── main.dart              # App entry point
+├── pubspec.yaml               # Project dependencies
+└── README.md                  # This file
 
-Adaptive Themes: Switch between light and dark modes for optimal visual comfort.
+```
+## 🚀 Getting Started
 
-Technologies Used
-Flutter SDK: For cross-platform mobile application development.
+### ✅ Prerequisites
 
-Google ML Kit:
+- [Flutter SDK](https://docs.flutter.dev/get-started/install) (v3.7.2 or newer)
+- VS Code or Android Studio (with Flutter/Dart plugins)
+- JDK 11+
+- Android/iOS device or emulator
 
-Text Recognition
+### 📥 Installation
 
-Object Detection
+1. Clone the repo:
 
-Face Detection
-
-Gemini API: For powerful conversational AI, image understanding, and text processing.
-
-Flutter TTS (Text-to-Speech): For vocalizing AI responses and app information.
-
-Speech-to-Text: For transcribing voice commands and inputs.
-
-Picovoice Porcupine: For efficient and low-power wake word detection (e.g., "Hey Assist Lens").
-
-Camera: For accessing device cameras.
-
-Geolocator & Flutter Map: For location services, mapping, and navigation.
-
-Connectivity Plus: For monitoring network connectivity.
-
-Permission Handler: For managing runtime permissions.
-
-Firebase Core: For core app functionalities and potentially future backend services.
-
-Provider: For state management.
-
-Logger: For robust logging and debugging.
-
-Vibration: For haptic feedback.
-
-Shared Preferences: For local data persistence (e.g., app settings, history).
-
-HTTP & Web Socket Channel: For network communication.
-
-TF Lite Flutter: For running on-device machine learning models.
-
-SQFlite: For local database storage (if used).
-
-Google Fonts: For custom typography.
-
-Flutter SpinKit: For loading indicators.
-
-Location, Sensors Plus, Geocoding, Intl, URL Launcher: Other utility packages.
-
-Getting Started
-Follow these instructions to set up and run the Assist Lens app on your local machine.
-
-Prerequisites
-Flutter SDK (Version 3.7.2 or higher recommended)
-
-Android Studio / VS Code with Flutter and Dart plugins
-
-A physical Android or iOS device, or an emulator/simulator.
-
-Installation
-Clone the repository:
-
-git clone [your-repo-url]
+```bash
+git clone https://github.com/yTwenethomas/aniwasmartlens.git
 cd assist_lens
+````
 
-Install Flutter dependencies:
+2. Install dependencies:
 
+```bash
 flutter pub get
+```
 
-Configure API Keys and Firebase:
+3. Set up Firebase:
 
-Firebase:
-Open lib/main.dart and replace the placeholder values (YOUR_API_KEY, YOUR_APP_ID, YOUR_MESSAGING_SENDER_ID, YOUR_PROJECT_ID) within FirebaseOptions with your actual Firebase project credentials.
+* Create a project in [Firebase Console](https://console.firebase.google.com/)
+* Add Android/iOS app
+* Download:
 
-// lib/main.dart
+  * `google-services.json` → `android/app/`
+  * `GoogleService-Info.plist` → `ios/Runner/`
+
+4. Fill in your Firebase details in `lib/main.dart`:
+
+```dart
 await Firebase.initializeApp(
   name: 'assist_lens',
   options: const FirebaseOptions(
@@ -106,64 +103,120 @@ await Firebase.initializeApp(
     projectId: 'YOUR_PROJECT_ID',
   ),
 );
+```
 
-Gemini API:
-The GeminiService in lib/core/services/gemini_service.dart typically uses an API key. Ensure that const apiKey = "" is present, as the Canvas environment will inject the API key at runtime. If you're running outside the Canvas, you'll need to provide your actual Gemini API key there:
+5. Add Gemini API Key in `lib/core/services/gemini_service.dart`:
 
-// lib/core/services/gemini_service.dart
-// ...
-const apiKey = ""; // Canvas will inject at runtime. For local dev, replace with your key if not using Canvas
-// ...
+```dart
+const apiKey = "YOUR_GEMINI_API_KEY";
+```
 
-ML Models: Ensure the ML models are correctly placed in the assets/ml/ directory. Your pubspec.yaml already lists them.
+6. Add AI model files (`.tflite`, `.txt`) in `assets/ml/`.
 
-Native Platform Setup
-For Android:
+---
 
-Refer to the detailed instructions in the android-native-setup document. Key steps include:
+## 🤖 Android Setup
 
-AndroidManifest.xml: Add necessary permissions (RECORD_AUDIO, INTERNET, CAMERA, ACCESS_FINE_LOCATION, FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE, etc.) and declare VoiceAssistantService.
+1. Add permissions to `android/app/src/main/AndroidManifest.xml`:
 
-android/app/build.gradle: Ensure minSdkVersion is 21 or higher and add implementation 'io.flutter.plugins.camera:camera-camera2:0.11.1' for Camera2 API.
+```xml
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+```
 
-VoiceAssistantService.kt: Ensure this Kotlin file is correctly placed under android/app/src/main/kotlin/com/example/assist_lens/ (adjust package name to match your applicationId). This service handles background microphone listening and communication with Flutter via Method/Event Channels.
+2. Define the voice service:
 
-For iOS:
+```xml
+<application>
+    <service
+        android:name=".VoiceAssistantService"
+        android:foregroundServiceType="microphone" />
+</application>
+```
 
-(Note: iOS native setup details for background audio/speech were not explicitly provided in the context, but common requirements include:)
+3. In `android/app/build.gradle`:
 
-Info.plist: Add privacy descriptions for microphone, camera, and location usage (NSMicrophoneUsageDescription, NSCameraUsageDescription, NSLocationWhenInUseUsageDescription, etc.).
+```gradle
+android {
+    defaultConfig {
+        minSdk = 21
+    }
+}
+dependencies {
+    implementation 'io.flutter.plugins.camera:camera-camera2:0.11.1'
+}
+```
 
-Background Modes: Enable "Audio, AirPlay, and Picture in Picture" and "Voice over IP" in your project's Signing & Capabilities for background audio processing if implementing always-on listening similar to Android's foreground service.
+4. Check `VoiceAssistantService.kt` (path: `android/app/src/main/kotlin/...`):
 
-Running the Application
-Connect a device or start an emulator/simulator.
+```kotlin
+package com.example.assist_lens
+```
 
-Run the app:
+Update the package name if different.
 
+---
+
+## 🍎 iOS Setup
+
+1. Add permission descriptions in `ios/Runner/Info.plist`.
+
+2. In Xcode, go to **Signing & Capabilities** > enable:
+
+* Background Modes
+
+  * ✅ Audio, AirPlay, Picture in Picture
+  * ✅ Voice over IP
+
+---
+
+## ▶️ Run the App
+
+```bash
+flutter clean
+flutter pub get
 flutter run
+```
 
-If you encounter compilation errors, run flutter clean and flutter pub get first.
+---
 
-Usage
-Voice Commands: Once the app is running, say "Hey Assist Lens" (or your configured wake word if using Porcupine) to activate the voice assistant. You can then speak commands like:
+## 🗣️ Using the App
 
-"Describe the scene."
+* Say **“Hey Assist Lens”** to activate the assistant.
 
-"Read this text."
+* Use commands like:
 
-"Find a restaurant near me."
+  * “Describe the scene.”
+  * “Read this text.”
+  * “Who’s around me?”
+  * “Call emergency.”
 
-"Who is this person?"
+* Tap the **Chat** tab to chat with Aniwa.
 
-"Call emergency."
+* Use the **Explore** tab for manual features.
 
-AI Chat: Navigate to the "Chat" tab to type messages and interact with Aniwa.
+---
 
-Explore Features: Use the "Explore" tab to manually access Text Reader, Scene Description, Object Detection, Facial Recognition, Navigation, and Emergency features.
+## 🤝 Contributing
 
-Contributing
-Contributions are welcome! If you have suggestions or want to contribute to the codebase, please fork the repository and submit a pull request.
+We welcome contributions!
 
-License
-This project is licensed under the MIT License - see the LICENSE.md file for details.
+1. Fork the repo
+2. Create your feature branch: `git checkout -b feature/your-feature`
+3. Commit: `git commit -m "Added new feature"`
+4. Push: `git push origin feature/your-feature`
+5. Open a **Pull Request**
+
+Try to follow existing code style and naming conventions.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License. See [`LICENSE.md`](./LICENSE.md) for details.
+
+---
+
+**Built with 💙 for the visually impaired community.**
+
