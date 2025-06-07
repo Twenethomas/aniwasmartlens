@@ -1,148 +1,169 @@
-# AssistLens
+Assist Lens: Your Hands-Free AI Companion
+Assist Lens is a cutting-edge mobile application designed to empower visually impaired individuals with enhanced accessibility and independence. Leveraging advanced AI capabilities, the app provides real-time information and assistance through voice commands, visual recognition, and smart navigation.
 
-A cross‑platform Flutter app providing vision‑enabled accessibility features  
-for visually impaired users and their caregivers.
+Features
+Aniwa AI Chat: Engage in natural language conversations with Aniwa, your intelligent AI assistant, powered by the Gemini API.
 
-![Flutter Version](https://img.shields.io/badge/flutter-3.7.2-blue)  
-![Dart Version](https://img.shields.io/badge/dart-3.1.5-blue)  
-![License](https://img.shields.io/badge/license-MIT-green)
+Voice Control & Hands-Free Operation: Control the app and its features using intuitive voice commands, providing a seamless and accessible user experience.
 
----
+Text Reader: Instantly recognize and read text from images (OCR), correct errors, and translate content into English.
 
-## 🚀 Features
+Scene Description: Capture a picture of your surroundings and receive a detailed AI-generated description of the scene.
 
-- **Onboarding**  
-  Animated, full‑screen walkthrough with high‑contrast branding.
+Object Detection: Get real-time identification of objects in your camera's view, with AI-powered descriptions on demand.
 
-- **Home Dashboard**  
-  Dynamic greeting, quick‑action carousel, recent activity, and caretaker panel.
+Facial Recognition: Identify known individuals through your camera, providing information about who is around you.
 
-- **Text Reader**  
-  Live camera capture (mobile & web), OCR via Azure GPT, TTS playback with play/stop controls.
+Smart Navigation: Plan routes, get real-time voice-guided directions, and receive proximity alerts to your destination.
 
-- **Scene Description**  
-  Describe surroundings, identify objects & colors via ML Kit.
+Emergency Assistance: Quickly access emergency contacts and share your location in critical situations.
 
-- **Navigation Aid**  
-  Voice‑guided indoor/outdoor routing with obstacle alerts.
+Activity History: Keep track of your past interactions and information queries.
 
-- **Face Recognition**  
-  Detect & name familiar faces via ML Kit Face Detection.
+Adaptive Themes: Switch between light and dark modes for optimal visual comfort.
 
-- **Emergency SOS**  
-  One‑tap alert calls & location sharing with paired caregiver.
+Technologies Used
+Flutter SDK: For cross-platform mobile application development.
 
-- **Video Call**  
-  Two‑way RTC video chat between user and caregiver.
+Google ML Kit:
 
-- **ESP32 Cam Integration**  
-  Optional external camera support for arduino‑powered wearables.
+Text Recognition
 
----
+Object Detection
 
-## 📦 Tech Stack & Dependencies
+Face Detection
 
-- **Flutter** (≥ 3.7.2) & **Dart** (≥ 3.1.5)  
-- **State Management**: Provider  
-- **OCR & Vision**:  
-  - Google ML Kit (Text, Face, Object)  
-  - Azure OpenAI GPT‑4 Vision endpoint  
-- **TTS**: `flutter_tts`  
-- **Camera**: `camera` + Web `<video>` via `dart:html`  
-- **Networking**: `http`, `connectivity_plus`  
-- **Local Storage**: `shared_preferences`  
-- **Mapping**: `flutter_map` + `latlong2`  
-- **WebRTC**: `flutter_webrtc`  
-- **Others**: `permission_handler`, `image`, `logger`, `url_launcher`
+Gemini API: For powerful conversational AI, image understanding, and text processing.
 
----
+Flutter TTS (Text-to-Speech): For vocalizing AI responses and app information.
 
-## ⚙️ Getting Started
+Speech-to-Text: For transcribing voice commands and inputs.
 
-### 1. Clone the repo
+Picovoice Porcupine: For efficient and low-power wake word detection (e.g., "Hey Assist Lens").
 
-git clone https://github.com/Twenethomas/aniwasmartlens.git
-cd aniwasmartlens2. Configure environment
-Copy the example env file and fill in your keys:
+Camera: For accessing device cameras.
 
-bash
-Copy
-Edit
-cp .env.example .env
-Edit .env and set:
+Geolocator & Flutter Map: For location services, mapping, and navigation.
 
-dotenv
-Copy
-Edit
-AZURE_OPENAI_ENDPOINT=https://buzznewwithgpt4.openai.azure.com
-AZURE_OPENAI_KEY=YOUR_API_KEY
-AZURE_COGNITIVE_SERVICES_KEY=YOUR_COGNITIVE_KEY
-3. Install dependencies
-bash
-Copy
-Edit
+Connectivity Plus: For monitoring network connectivity.
+
+Permission Handler: For managing runtime permissions.
+
+Firebase Core: For core app functionalities and potentially future backend services.
+
+Provider: For state management.
+
+Logger: For robust logging and debugging.
+
+Vibration: For haptic feedback.
+
+Shared Preferences: For local data persistence (e.g., app settings, history).
+
+HTTP & Web Socket Channel: For network communication.
+
+TF Lite Flutter: For running on-device machine learning models.
+
+SQFlite: For local database storage (if used).
+
+Google Fonts: For custom typography.
+
+Flutter SpinKit: For loading indicators.
+
+Location, Sensors Plus, Geocoding, Intl, URL Launcher: Other utility packages.
+
+Getting Started
+Follow these instructions to set up and run the Assist Lens app on your local machine.
+
+Prerequisites
+Flutter SDK (Version 3.7.2 or higher recommended)
+
+Android Studio / VS Code with Flutter and Dart plugins
+
+A physical Android or iOS device, or an emulator/simulator.
+
+Installation
+Clone the repository:
+
+git clone [your-repo-url]
+cd assist_lens
+
+Install Flutter dependencies:
+
 flutter pub get
-4. Run the app
-Mobile (Android/iOS):
 
-bash
-Copy
-Edit
+Configure API Keys and Firebase:
+
+Firebase:
+Open lib/main.dart and replace the placeholder values (YOUR_API_KEY, YOUR_APP_ID, YOUR_MESSAGING_SENDER_ID, YOUR_PROJECT_ID) within FirebaseOptions with your actual Firebase project credentials.
+
+// lib/main.dart
+await Firebase.initializeApp(
+  name: 'assist_lens',
+  options: const FirebaseOptions(
+    apiKey: 'YOUR_API_KEY',
+    appId: 'YOUR_APP_ID',
+    messagingSenderId: 'YOUR_MESSAGING_SENDER_ID',
+    projectId: 'YOUR_PROJECT_ID',
+  ),
+);
+
+Gemini API:
+The GeminiService in lib/core/services/gemini_service.dart typically uses an API key. Ensure that const apiKey = "" is present, as the Canvas environment will inject the API key at runtime. If you're running outside the Canvas, you'll need to provide your actual Gemini API key there:
+
+// lib/core/services/gemini_service.dart
+// ...
+const apiKey = ""; // Canvas will inject at runtime. For local dev, replace with your key if not using Canvas
+// ...
+
+ML Models: Ensure the ML models are correctly placed in the assets/ml/ directory. Your pubspec.yaml already lists them.
+
+Native Platform Setup
+For Android:
+
+Refer to the detailed instructions in the android-native-setup document. Key steps include:
+
+AndroidManifest.xml: Add necessary permissions (RECORD_AUDIO, INTERNET, CAMERA, ACCESS_FINE_LOCATION, FOREGROUND_SERVICE, FOREGROUND_SERVICE_MICROPHONE, etc.) and declare VoiceAssistantService.
+
+android/app/build.gradle: Ensure minSdkVersion is 21 or higher and add implementation 'io.flutter.plugins.camera:camera-camera2:0.11.1' for Camera2 API.
+
+VoiceAssistantService.kt: Ensure this Kotlin file is correctly placed under android/app/src/main/kotlin/com/example/assist_lens/ (adjust package name to match your applicationId). This service handles background microphone listening and communication with Flutter via Method/Event Channels.
+
+For iOS:
+
+(Note: iOS native setup details for background audio/speech were not explicitly provided in the context, but common requirements include:)
+
+Info.plist: Add privacy descriptions for microphone, camera, and location usage (NSMicrophoneUsageDescription, NSCameraUsageDescription, NSLocationWhenInUseUsageDescription, etc.).
+
+Background Modes: Enable "Audio, AirPlay, and Picture in Picture" and "Voice over IP" in your project's Signing & Capabilities for background audio processing if implementing always-on listening similar to Android's foreground service.
+
+Running the Application
+Connect a device or start an emulator/simulator.
+
+Run the app:
+
 flutter run
-Web:
 
-bash
-Copy
-Edit
-flutter run -d chrome
-🧩 Project Structure
-perl
-Copy
-Edit
-lib/
-├── core/
-│   ├── services/       # OCR, networking, history, state
-│   └── utils/          # image preprocessing, token trimming
-├── features/
-│   ├── onboarding/     # Onboarding screens & widgets
-│   ├── home/           # Dashboard & widgets
-│   ├── text_reader/    # Capture, OCR & TTS UI
-│   ├── scene_description/
-│   ├── navigation/
-│   ├── face_recognition/
-│   ├── emergency/
-│   ├── video_call/
-│   └── esp32_cam/      # (stub for future)
-├── state/              # AppState & Provider setup
-└── widgets/            # Shared UI components
-📖 Usage
-On first launch, swipe through onboarding slides.
+If you encounter compilation errors, run flutter clean and flutter pub get first.
 
-From Home, tap any feature card to launch.
+Usage
+Voice Commands: Once the app is running, say "Hey Assist Lens" (or your configured wake word if using Porcupine) to activate the voice assistant. You can then speak commands like:
 
-Text Reader: capture or pick an image → auto‑compress & send to Azure OCR → view & speak text.
+"Describe the scene."
 
-History: view past readings in the History screen.
+"Read this text."
 
-Emergency: quickly alert your paired caregiver.
+"Find a restaurant near me."
 
-🤝 Contributing
-Fork the repository
+"Who is this person?"
 
-Create a feature branch (git checkout -b feature/YourFeature)
+"Call emergency."
 
-Commit your changes (git commit -m 'Add some feature')
+AI Chat: Navigate to the "Chat" tab to type messages and interact with Aniwa.
 
-Push to the branch (git push origin feature/YourFeature)
+Explore Features: Use the "Explore" tab to manually access Text Reader, Scene Description, Object Detection, Facial Recognition, Navigation, and Emergency features.
 
-Open a Pull Request
+Contributing
+Contributions are welcome! If you have suggestions or want to contribute to the codebase, please fork the repository and submit a pull request.
 
-Please adhere to the existing code style and include relevant tests if possible.
-
-📝 License
-This project is licensed under the MIT License.
-
-📞 Support
-If you run into issues or have questions, please file an issue on GitHub or email support@aniwasmartlens.org.
-
-Built with ❤️ by the AniwaSmartLens team
+License
+This project is licensed under the MIT License - see the LICENSE.md file for details.
