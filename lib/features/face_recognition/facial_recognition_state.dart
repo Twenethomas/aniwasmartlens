@@ -102,6 +102,8 @@ class FacialRecognitionState extends ChangeNotifier {
     _logger.i("FaceDetector initialized.");
   }
 
+
+
   /// Initializes the camera and starts the live feed if autoStartLive is true.
   Future<void> initCamera({bool autoStartLive = false}) async {
     // If the state object has been disposed, we cannot initialize the camera.
