@@ -2,8 +2,8 @@
 import 'dart:io'; // For File
 import 'dart:typed_data'; // For Uint8List, Float32List
 import 'dart:math'; // For sqrt, pow
+import 'dart:ui';
 
-import 'package:flutter/services.dart'; // For ByteData, rootBundle
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img_lib; // Alias for the 'image' package
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart'; // For Face object
@@ -156,14 +156,15 @@ class FaceRecognizerService {
     final input = inputBytes.reshape([1, _inputImageSize, _inputImageSize, 3]);
 
     // 4. Prepare output buffer
-    // MobileFaceNet outputs a 128-dimensional embedding
-    final output = List.filled(1 * 128, 0.0).reshape([1, 128]); // Assuming 128-dim embedding output
+    // MobileFaceNet outputs a 192-dimensional embedding based on the error log.
+    final output = List.filled(1 * 192, 0.0).reshape([1, 192]);
 
     // 5. Run inference
     try {
       _interpreter!.run(input, output);
       // The output is typically a list of lists, so output[0] gives the embedding
-      final Float32List embedding = output[0].cast<double>().buffer.asFloat32List();
+      // Fixed: Directly convert List<double> to Float32List
+      final Float32List embedding = Float32List.fromList(output[0].cast<double>());
       _logger.d('FaceRecognizerService: Embedding generated successfully.');
       return embedding;
     } catch (e) {
@@ -289,21 +290,5 @@ class FaceRecognizerService {
     _interpreter?.close();
     _interpreter = null;
     _knownFaces.clear(); // Clear in-memory cache
-  }
-}
-
-// Extension for converting DeviceOrientation to InputImageRotation
-extension on DeviceOrientation {
-  InputImageRotation rotationToInputImageRotation() {
-    switch (this) {
-      case DeviceOrientation.portraitUp:
-        return InputImageRotation.rotation0deg;
-      case DeviceOrientation.landscapeLeft:
-        return InputImageRotation.rotation90deg;
-      case DeviceOrientation.portraitDown:
-        return InputImageRotation.rotation180deg;
-      case DeviceOrientation.landscapeRight:
-        return InputImageRotation.rotation270deg;
-    }
   }
 }

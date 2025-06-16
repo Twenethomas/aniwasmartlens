@@ -1,12 +1,15 @@
 // lib/features/scene_description/scene_description_page.dart
-import 'package:assist_lens/main.dart';
-import 'package:camera/camera.dart';
+// Required for File
 import 'package:flutter/material.dart';
+import 'package:camera/camera.dart'; // For CameraPreview
 import 'package:google_fonts/google_fonts.dart';
+import 'package:logger/logger.dart';
 import 'package:provider/provider.dart';
 
-import 'scene_description_state.dart'; // Import SceneDescriptionState
-import '../../core/services/speech_service.dart'; // Import SpeechService to directly call speak/stopSpeaking
+import 'package:assist_lens/features/scene_description/scene_description_state.dart'; // Import SceneDescriptionState
+import 'package:assist_lens/core/services/camera_service.dart'; // NEW: Import CameraService
+import 'package:assist_lens/main.dart'; // For global logger and routeObserver
+// Import AppRouter
 
 class SceneDescriptionPage extends StatefulWidget {
   final bool autoDescribe;
@@ -17,241 +20,443 @@ class SceneDescriptionPage extends StatefulWidget {
   State<SceneDescriptionPage> createState() => _SceneDescriptionPageState();
 }
 
-class _SceneDescriptionPageState extends State<SceneDescriptionPage> with RouteAware {
-  late SceneDescriptionState _sceneDescriptionState;
-  late SpeechService _speechService; // To manage speech directly
-  bool _initialCameraSetupComplete = false; // Flag for initial camera init
+class _SceneDescriptionPageState extends State<SceneDescriptionPage>
+    with WidgetsBindingObserver, RouteAware {
+  final Logger _logger = logger; // Using global logger
+  SceneDescriptionState? _sceneDescriptionState; // Now nullable
+  late CameraService _cameraService; // Reference to CameraService
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // Observe app lifecycle
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Get CameraService instance via Provider
+    _cameraService = Provider.of<CameraService>(context, listen: false);
+    // Add listener to CameraService for status changes
+    _cameraService.addListener(_onCameraServiceStatusChanged);
+
+    // Get SceneDescriptionState instance (now initialized here)
     _sceneDescriptionState = Provider.of<SceneDescriptionState>(context, listen: false);
-    _speechService = Provider.of<SpeechService>(context, listen: false); // Get SpeechService
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final route = ModalRoute.of(context);
-      if (route is PageRoute) { // Ensure it's a PageRoute before subscribing
-        routeObserver.subscribe(this, route);
-      } else {
-        logger.w("AniwaChatPage: Cannot subscribe to RouteObserver, current route is not a PageRoute.");
-      }
-    });
+    // Register this route with RouteObserver
+    routeObserver.subscribe(this, ModalRoute.of(context)! as PageRoute);
 
-    if (!_initialCameraSetupComplete) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _sceneDescriptionState.initCamera().then((_) {
-            if (widget.autoDescribe && _sceneDescriptionState.isCameraReady) {
-              _sceneDescriptionState.takePictureAndDescribe();
-            }
-          });
-          _initialCameraSetupComplete = true;
-        }
-      });
-    }
+    // Initial camera setup when the screen is first becoming active
+    _initializeCameraForScreen();
   }
 
-  @override
-  void didPush() {
-    logger.i("SceneDescriptionPage: didPush - Page is active. Resuming camera.");
-    // Only attempt to resume if the controller exists and isn't already streaming.
-    // Initial camera setup handled by postFrameCallback in didChangeDependencies.
-    // Ensure `initCamera` is called to resume stream or re-initialize if needed.
-    if (_initialCameraSetupComplete && _sceneDescriptionState.cameraController != null && !_sceneDescriptionState.cameraController!.value.isStreamingImages) {
-        _sceneDescriptionState.initCamera(); // This will resume stream or re-initialize as needed
-    }
-    super.didPush();
-  }
-
+  /// This method is called when the current route is popped off, and the user returns to this route.
   @override
   void didPopNext() {
-    logger.i("SceneDescriptionPage: didPopNext - Returning to page. Resuming camera.");
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _sceneDescriptionState.initCamera(); // This will resume stream or re-initialize as needed
-      }
-    });
+    _logger.i("SceneDescriptionPage: didPopNext - Resuming from next route.");
+    // Re-initialize camera when returning to this screen
+    _initializeCameraForScreen();
     super.didPopNext();
   }
 
+  /// This method is called when the current route is pushed onto, and is no longer the top-most route.
   @override
   void didPushNext() {
-    logger.i("SceneDescriptionPage: didPushNext - Navigating away from page. Disposing camera.");
-    _speechService.stopSpeaking(); // Stop speaking if navigating away
-    _sceneDescriptionState.disposeCamera(); // Dispose camera when leaving
+    _logger.i("SceneDescriptionPage: didPushNext - Navigating to next route. Stopping camera.");
+    // Stop camera and stream when navigating away from this screen
+    _stopCameraForScreen();
     super.didPushNext();
   }
 
+  /// Handles application lifecycle state changes.
+  /// Stops camera when app goes to background and re-initializes when it resumes.
   @override
-  void didPop() {
-    logger.i("SceneDescriptionPage: didPop - Page is being popped. Disposing camera.");
-    _speechService.stopSpeaking(); // Stop speaking if page is popped
-    _sceneDescriptionState.disposeCamera(); // Dispose camera when popped
-    super.didPop();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _logger.i("SceneDescriptionPage: App lifecycle state changed: $state");
+    if (state == AppLifecycleState.inactive) {
+      _stopCameraForScreen(); // Stop camera when app is inactive
+    } else if (state == AppLifecycleState.resumed) {
+      _initializeCameraForScreen(); // Re-initialize camera when app resumes
+    }
   }
 
-  @override
-  void dispose() {
-    routeObserver.unsubscribe(this);
-    // State disposal handled by Provider
-    super.dispose();
+  /// Centralized method to initialize the camera for this screen's use.
+  Future<void> _initializeCameraForScreen() async {
+    _logger.i("SceneDescriptionPage: _initializeCameraForScreen called.");
+    // Only initialize camera if it's not already initialized by the service
+    // for this screen's needs. CameraService is now smart about idempotency.
+    await _cameraService.initializeCamera();
+    // Pass controller to state AFTER CameraService has potentially initialized it
+    _sceneDescriptionState?.setCameraController(_cameraService.cameraController);
+    if (widget.autoDescribe && _cameraService.isCameraInitialized) {
+      _sceneDescriptionState?.startAutoDescription(); // Use null-aware access
+    }
+  }
+
+  /// Centralized method to stop and dispose the camera for this screen's use.
+  Future<void> _stopCameraForScreen() async {
+    _logger.i("SceneDescriptionPage: _stopCameraForScreen called.");
+    // Stop any live description first
+    _sceneDescriptionState?.stopAutoDescription(); // Use null-aware access
+    // Dispose the camera controller via the service
+    await _cameraService.disposeCamera();
+  }
+
+  /// Callback for CameraService status changes. Triggers a UI rebuild if mounted.
+  void _onCameraServiceStatusChanged() {
+    _logger.d("SceneDescriptionPage: CameraService status changed. Initialized: ${_cameraService.isCameraInitialized}, Streaming: ${_cameraService.isStreamingImages}, Error: ${_cameraService.cameraErrorMessage}");
+    if (!mounted) return;
+    // Notify the SceneDescriptionState that the camera controller might have changed
+    _sceneDescriptionState?.setCameraController(_cameraService.cameraController); // Use null-aware access
+    setState(() {}); // Rebuild to reflect camera status changes in UI
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
 
+    // Use Consumer to react to SceneDescriptionState changes
+    // The 'state' provided here is guaranteed to be non-nullable if provider is set up correctly.
     return Consumer<SceneDescriptionState>(
       builder: (context, state, child) {
-        return Scaffold(
-          backgroundColor: colorScheme.background,
-          appBar: AppBar(
-            title: Text(
-              'Scene Description',
-              style: GoogleFonts.sourceCodePro(
-                color: colorScheme.onPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+        // Show loading/error state if camera is not initialized by the CameraService
+        // We use _cameraService.isCameraInitialized directly here as it's the source of truth
+        if (!_cameraService.isCameraInitialized) {
+          return Scaffold(
+            appBar: AppBar(
+              title: Text('Scene Description', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+              backgroundColor: colorScheme.primary,
+              foregroundColor: colorScheme.onPrimary,
+            ),
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 20),
+                  Text(
+                    _cameraService.cameraErrorMessage ?? "Initializing camera...",
+                    style: Theme.of(context).textTheme.titleMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  if (_cameraService.cameraErrorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 20.0),
+                      child: ElevatedButton(
+                        onPressed: _initializeCameraForScreen, // Retry initialization
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colorScheme.secondary,
+                          foregroundColor: colorScheme.onSecondary,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                        ),
+                        child: Text('Retry Camera', style: GoogleFonts.poppins(fontSize: 16)),
+                      ),
+                    ),
+                ],
               ),
             ),
+          );
+        }
+
+        // Main UI when camera is initialized
+        return Scaffold(
+          appBar: AppBar(
+            title: Text('Scene Description', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
             backgroundColor: colorScheme.primary,
-            centerTitle: true,
-            leading: IconButton(
-              icon: Icon(Icons.arrow_back_ios_new_rounded, color: colorScheme.onPrimary),
-              onPressed: () => Navigator.pop(context),
-            ),
+            foregroundColor: colorScheme.onPrimary,
             actions: [
               IconButton(
-                icon: Icon(Icons.photo_library_rounded, color: colorScheme.onPrimary),
-                onPressed: !state.isProcessingAI && !state.isCameraCapturing
-                    ? state.pickImageAndDescribe
-                    : null,
-                tooltip: 'Pick from Gallery',
+                icon: Icon(_cameraService.isFlashOn ? Icons.flash_on : Icons.flash_off),
+                onPressed: () async {
+                  await _cameraService.toggleFlash();
+                },
               ),
               IconButton(
-                icon: Icon(Icons.clear_all_rounded, color: colorScheme.onPrimary),
-                onPressed: !state.isProcessingAI && !state.isCameraCapturing
-                    ? state.clearDescription
-                    : null,
-                tooltip: 'Clear Description',
+                icon: Icon(Icons.cameraswitch),
+                onPressed: () async {
+                  await _cameraService.toggleCamera();
+                },
               ),
             ],
           ),
           body: Stack(
             children: [
-              if (state.isCameraReady && state.cameraController != null && state.cameraController!.value.isInitialized)
+              // Camera Preview fills the background
+              Positioned.fill(
+                child: CameraPreview(_cameraService.cameraController!), // ! is safe here due to the _cameraService.isCameraInitialized check above
+              ),
+              // Dim overlay when processing
+              if (state.isProcessing) // Access isProcessing directly from the non-nullable 'state'
                 Positioned.fill(
-                  child: CameraPreview(state.cameraController!),
-                )
-              else
-                Center(
-                  child: state.errorMessage.isNotEmpty
-                      ? Text(
-                          state.errorMessage,
-                          style: textTheme.headlineSmall?.copyWith(color: colorScheme.error),
-                          textAlign: TextAlign.center,
-                        )
-                      : CircularProgressIndicator(color: colorScheme.primary),
-                ),
-              // Overlay for image description and controls
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.all(16.0),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface.withAlpha((0.9 * 255).round()), // Corrected deprecated `withOpacity`
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(20),
-                      topRight: Radius.circular(20),
+                  child: Container(
+                    color: Colors.black.withOpacity(0.5), // Deprecated withOpacity, will fix below
+                    child: Center(
+                      child: CircularProgressIndicator(color: colorScheme.secondary),
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 10,
-                        spreadRadius: 5,
-                      ),
-                    ],
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (state.isProcessingAI || state.isCameraCapturing) // Corrected getter from isProcessing
-                        LinearProgressIndicator(color: colorScheme.primary)
-                      else
-                        const SizedBox(height: 4),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Scene Description:',
-                        style: textTheme.labelLarge?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        state.imageDescription.isNotEmpty // Corrected getter from sceneDescription
-                            ? state.imageDescription
-                            : (state.isProcessingAI // Corrected getter from isProcessing
-                                ? 'Processing...'
-                                : 'Take a picture or select one from gallery to get a description.'),
-                        style: textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: 20),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          ElevatedButton.icon(
-                            onPressed: !state.isProcessingAI && state.imageDescription.isNotEmpty
-                                ? () => _speechService.speak(state.imageDescription) // Corrected getter from isProcessing
-                                : null,
-                            icon: Icon(Icons.volume_up_rounded, color: colorScheme.onPrimary),
-                            label: Text('Speak', style: textTheme.labelLarge?.copyWith(color: colorScheme.onPrimary)),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: colorScheme.primary,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                ),
+              // Draggable scrollable sheet for results and controls
+              DraggableScrollableSheet(
+                initialChildSize: 0.25,
+                minChildSize: 0.1,
+                maxChildSize: 0.7,
+                expand: false,
+                builder: (BuildContext context, ScrollController scrollController) {
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2), // Deprecated withOpacity
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        // Handle for dragging the sheet
+                        Container(
+                          height: 40,
+                          alignment: Alignment.center,
+                          child: Container(
+                            width: 60,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: colorScheme.onSurface.withOpacity(0.3), // Deprecated withOpacity
+                              borderRadius: BorderRadius.circular(2.5),
                             ),
                           ),
-                          if (_speechService.isSpeaking) // Check global speaking status
-                            ElevatedButton.icon(
-                              onPressed: _speechService.stopSpeaking, // Corrected call from state.stopSpeaking
-                              icon: Icon(Icons.stop_rounded, color: colorScheme.onError),
-                              label: Text('Stop', style: textTheme.labelLarge?.copyWith(color: colorScheme.onError)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: colorScheme.error,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              ),
+                        ),
+                        Expanded(
+                          child: SingleChildScrollView(
+                            controller: scrollController,
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Scene Description',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.bold,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                // Display description
+                                if (state.sceneDescription != null)
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.secondaryContainer,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      state.sceneDescription!, // ! is safe due to null check
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 16,
+                                        color: colorScheme.onSecondaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                if (state.sceneDescription == null && !state.isProcessing)
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.surfaceContainerHighest, // Use surfaceContainerHighest
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      'Tap "Describe" to get a description of the scene.',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 16,
+                                        fontStyle: FontStyle.italic,
+                                        color: colorScheme.onSurfaceVariant.withAlpha((0.7 * 255).round()), // Use .withAlpha
+                                      ),
+                                    ),
+                                  ),
+                                const SizedBox(height: 20),
+                                // Error message display
+                                if (state.errorMessage != null)
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.errorContainer,
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      'Error: ${state.errorMessage!}', // ! is safe due to null check
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 14,
+                                        color: colorScheme.onErrorContainer,
+                                      ),
+                                    ),
+                                  ),
+                                const SizedBox(height: 20),
+                                // Action Buttons
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                  children: [
+                                    Expanded(
+                                      child: ElevatedButton.icon(
+                                        icon: Icon(Icons.description, color: colorScheme.onSecondary),
+                                        label: Text(
+                                          'Describe',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        onPressed: state.isProcessing || !state.isInitialized // Access directly
+                                            ? null
+                                            : () => state.takePictureAndDescribeScene(), // Access directly
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: colorScheme.secondary,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 14,
+                                          ),
+                                          elevation: 5,
+                                          shadowColor: colorScheme.secondary.withAlpha((0.3 * 255).round()),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: ElevatedButton.icon(
+                                        icon: Icon(Icons.mic, color: colorScheme.onPrimary),
+                                        label: Text(
+                                          'Speak',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        onPressed: state.isProcessing || state.sceneDescription == null // Access directly
+                                            ? null
+                                            : () => state.speakDescription(), // Access directly
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: colorScheme.primary,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 14,
+                                          ),
+                                          elevation: 5,
+                                          shadowColor: colorScheme.primary.withAlpha((0.3 * 255).round()),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                  children: [
+                                    Expanded(
+                                      child: ElevatedButton.icon(
+                                        icon: Icon(Icons.send, color: colorScheme.onTertiary),
+                                        label: Text(
+                                          'Send to Chat',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        onPressed: state.isProcessing || state.sceneDescription == null // Access directly
+                                            ? null
+                                            : () => state.sendDescriptionToChat(), // Access directly
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: colorScheme.tertiary,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 14,
+                                          ),
+                                          elevation: 5,
+                                          shadowColor: colorScheme.tertiary.withAlpha((0.3 * 255).round()),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: ElevatedButton.icon(
+                                        icon: Icon(Icons.clear, color: colorScheme.onError),
+                                        label: Text(
+                                          'Clear',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        onPressed: state.isProcessing || (state.sceneDescription == null && state.errorMessage == null) // Access directly
+                                            ? null
+                                            : () => state.clearResults(), // Access directly
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: colorScheme.error,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(12),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 14,
+                                          ),
+                                          elevation: 5,
+                                          shadowColor: colorScheme.error.withAlpha((0.3 * 255).round()),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 20),
+                                if (state.isAutoDescribing)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 10.0),
+                                    child: Center(
+                                      child: Text(
+                                        "Auto-describing...",
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 16,
+                                          fontStyle: FontStyle.italic,
+                                          color: colorScheme.onSurface.withAlpha((0.8 * 255).round()), // Use .withAlpha
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             ],
           ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: !state.isProcessingAI && !state.isCameraCapturing && state.isCameraReady // Corrected getter from isProcessing
-                ? state.takePictureAndDescribe // Corrected method name
-                : null,
-            tooltip: 'Take Picture',
-            backgroundColor: !state.isProcessingAI && !state.isCameraCapturing && state.isCameraReady
-                ? colorScheme.primary
-                : colorScheme.primary.withAlpha((0.5 * 255).round()), // Corrected deprecated `withOpacity`
-            child: state.isCameraCapturing || state.isProcessingAI
-                ? CircularProgressIndicator(color: colorScheme.onPrimary)
-                : Icon(Icons.camera_alt_rounded, color: colorScheme.onPrimary),
-          ),
-          floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
         );
       },
     );
+  }
+
+  @override
+  void dispose() {
+    _logger.i("SceneDescriptionPage: Disposing widget.");
+    WidgetsBinding.instance.removeObserver(this); // Stop observing lifecycle
+    routeObserver.unsubscribe(this); // Unsubscribe from route observer
+    // Remove listener from CameraService to prevent memory leaks
+    _cameraService.removeListener(_onCameraServiceStatusChanged);
+    _stopCameraForScreen(); // Ensure camera resources are properly released
+    super.dispose();
   }
 }

@@ -1,21 +1,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
+
+import 'package:google_maps_flutter/google_maps_flutter.dart'; // New Google Maps import
 import 'package:geocoding/geocoding.dart' as geocoding;
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart'
-    as latlong2; // Explicitly import LatLng from latlong2 with a prefix
-import 'package:permission_handler/permission_handler.dart';
+    as latlong2; // Keeping latlong2 for compatibility with geolocator/geocoding, but converting to LatLng for Google Maps
 import 'package:assist_lens/core/services/speech_service.dart'; // Import SpeechService
 import 'package:logger/logger.dart';
 import 'package:google_fonts/google_fonts.dart'; // Added import for GoogleFonts
 
 import 'package:assist_lens/main.dart'; // For routeObserver
-// We will assume active_navigation_screen.dart will also use latlong2.LatLng
-// So, we don't need to hide LatLng from it anymore.
 import 'package:assist_lens/core/routing/app_router.dart';
-import 'package:vibration/vibration.dart'; // Import AppRouter
+// Import AppRouter
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -29,10 +26,15 @@ class _MapScreenState extends State<MapScreen>
   final Logger _logger = Logger();
   final _formKey = GlobalKey<FormState>(); // For text field
   final TextEditingController _destinationController = TextEditingController();
-  late MapController _mapController;
-  latlong2.LatLng? _currentLocation;
-  latlong2.LatLng? _destinationLocation;
-  Marker? _destinationMarker;
+
+  GoogleMapController? _googleMapController;
+
+  latlong2.LatLng? _currentLocation; // From geolocator/latlong2
+  LatLng? _googleMapCurrentLocation; // Converted to Google Maps LatLng
+  LatLng? _destinationLocation; // Google Maps LatLng for destination
+
+  final Set<Marker> _markers = {};
+
   String _currentAddress = 'Fetching current location...';
   String _destinationAddress = '';
   StreamSubscription<Position>? _positionStreamSubscription;
@@ -40,6 +42,8 @@ class _MapScreenState extends State<MapScreen>
 
   bool _isLocationServiceEnabled = false;
   LocationPermission _locationPermission = LocationPermission.denied;
+  bool _isRequestingPermission =
+      false; // NEW: Flag to prevent concurrent permission requests
 
   @override
   void initState() {
@@ -47,9 +51,10 @@ class _MapScreenState extends State<MapScreen>
     WidgetsBinding.instance.addObserver(
       this,
     ); // Add observer for lifecycle events
-    _mapController = MapController();
-    _checkLocationPermissions();
-    _startLocationUpdates();
+    _checkLocationPermissions().then((_) {
+      // Start location updates only after initial permission check is done
+      _startLocationUpdates();
+    });
   }
 
   @override
@@ -99,8 +104,10 @@ class _MapScreenState extends State<MapScreen>
       _positionStreamSubscription?.cancel();
     } else if (state == AppLifecycleState.resumed) {
       _logger.i("App resumed, restarting location updates.");
-      _checkLocationPermissions();
-      _startLocationUpdates();
+      _checkLocationPermissions().then((_) {
+        // Only restart if permissions are already granted or were just granted
+        _startLocationUpdates();
+      });
     }
   }
 
@@ -108,30 +115,60 @@ class _MapScreenState extends State<MapScreen>
     _isLocationServiceEnabled = await Geolocator.isLocationServiceEnabled();
     _locationPermission = await Geolocator.checkPermission();
     if (mounted) {
-      setState(() {});
+      setState(() {}); // Update UI to reflect current permission status
     }
   }
 
   Future<void> _startLocationUpdates() async {
+    // NEW: Prevent multiple concurrent permission requests
+    if (_isRequestingPermission) {
+      _logger.d("Already requesting location permissions, skipping.");
+      return;
+    }
+
+    // Re-check status just before initiating updates/requests
+    await _checkLocationPermissions();
+
     if (!_isLocationServiceEnabled ||
         _locationPermission == LocationPermission.denied ||
         _locationPermission == LocationPermission.deniedForever) {
       _logger.w(
-        "Location services not enabled or permissions denied. Requesting...",
+        "Location services not enabled or permissions denied. Attempting to request...",
       );
-      await Geolocator.requestPermission();
-      await _checkLocationPermissions(); // Re-check after requesting
+
+      if (_locationPermission == LocationPermission.deniedForever) {
+        _speechService.speak(
+          "Location permissions are permanently denied. Please enable them from your device settings.",
+        );
+        _logger.e(
+          "Location permissions permanently denied. Cannot request programmatically.",
+        );
+        return;
+      }
+
+      // Only request if not denied forever and not already requesting
+      _isRequestingPermission = true;
+      try {
+        _locationPermission = await Geolocator.requestPermission();
+        if (mounted) setState(() {}); // Update UI after request attempt
+      } finally {
+        _isRequestingPermission = false; // Reset flag
+      }
+
+      // After request, check if permissions are now granted and service is enabled
       if (!mounted ||
-          !_isLocationServiceEnabled || // Added mounted check
+          !_isLocationServiceEnabled ||
           _locationPermission == LocationPermission.denied ||
           _locationPermission == LocationPermission.deniedForever) {
         _speechService.speak(
           "Location services are not enabled or permissions are denied. Please enable them in your settings.",
         );
+        _logger.e("Failed to obtain location permission after request.");
         return;
       }
     }
 
+    // If we reach here, permissions should be granted and service enabled.
     _positionStreamSubscription?.cancel(); // Cancel any existing subscription
 
     _positionStreamSubscription = Geolocator.getPositionStream(
@@ -147,10 +184,16 @@ class _MapScreenState extends State<MapScreen>
               position.latitude,
               position.longitude,
             );
-            _mapController.move(
-              _currentLocation!,
-              _mapController.camera.zoom,
-            ); // Corrected to .camera.zoom
+            _googleMapCurrentLocation = LatLng(
+              position.latitude,
+              position.longitude,
+            );
+            if (_googleMapController != null) {
+              _googleMapController!.animateCamera(
+                CameraUpdate.newLatLng(_googleMapCurrentLocation!),
+              );
+            }
+            _updateCurrentLocationMarker();
           });
           _resolveCurrentAddress(position);
         }
@@ -164,6 +207,34 @@ class _MapScreenState extends State<MapScreen>
     );
   }
 
+  /// Updates the marker for the user's current location on the Google Map.
+  void _updateCurrentLocationMarker() {
+    if (_googleMapCurrentLocation == null) return;
+
+    final markerId = MarkerId('currentLocation');
+    final marker = Marker(
+      markerId: markerId,
+      position: _googleMapCurrentLocation!,
+      infoWindow: InfoWindow(
+        title: 'Your Current Location',
+        snippet: _currentAddress,
+      ),
+      icon: BitmapDescriptor.defaultMarkerWithHue(
+        BitmapDescriptor.hueAzure,
+      ), // A blue marker
+    );
+
+    // Add or update the current location marker
+    if (mounted) {
+      setState(() {
+        _markers.removeWhere(
+          (m) => m.markerId == markerId,
+        ); // Remove old marker if exists
+        _markers.add(marker);
+      });
+    }
+  }
+
   Future<void> _resolveCurrentAddress(Position position) async {
     try {
       List<geocoding.Placemark> placemarks = await geocoding
@@ -171,49 +242,23 @@ class _MapScreenState extends State<MapScreen>
       if (placemarks.isNotEmpty) {
         final placemark = placemarks.first;
         if (mounted) {
-          // Added mounted check
           setState(() {
             _currentAddress =
                 '${placemark.street}, ${placemark.locality}, ${placemark.country}';
+            _updateCurrentLocationMarker(); // Update marker info window with new address
           });
         }
       }
     } catch (e) {
       _logger.e("Error resolving current address: $e");
       if (mounted) {
-        // Added mounted check
         setState(() {
           _currentAddress = 'Address not found.';
+          _updateCurrentLocationMarker(); // Update marker info window
         });
       }
     }
   }
-
-  //   Future<void> _resolveDestinationAddress() async {
-  //     try {
-  //       List<geocoding.Placemark> placemarks =
-  //  await geocoding.placemarkFromCoordinates(
-  //  widget.destinationLocation!.latitude,
-  //         widget.destination.longitude,
-  //       );
-  //       if (placemarks.isNotEmpty) {
-  //         final placemark = placemarks.first;
-  //         if (mounted) { // Added mounted check
-  //           setState(() {
-  //             _destinationAddress =
-  //                 '${placemark.street}, ${placemark.locality}, ${placemark.country}';
-  //           });
-  //         }
-  //       }
-  //     } catch (e) {
-  //       _logger.e("Error resolving destination address: $e");
-  //       if (mounted) { // Added mounted check
-  //         setState(() {
-  //           _destinationAddress = 'Destination address not found.';
-  //         });
-  //       }
-  //     }
-  //   }
 
   Future<void> _searchDestination(String query) async {
     if (query.isEmpty) {
@@ -227,39 +272,82 @@ class _MapScreenState extends State<MapScreen>
       );
       if (locations.isNotEmpty) {
         final location = locations.first;
-        final latlng = latlong2.LatLng(location.latitude, location.longitude);
+        final newDestination = LatLng(
+          location.latitude,
+          location.longitude,
+        ); // Google Maps LatLng
         if (mounted) {
           setState(() {
-            _destinationLocation = latlng;
-            _destinationMarker = Marker(
-              point: _destinationLocation!,
-              width: 80,
-              height: 80,
-              child: const Icon(
-                Icons.location_pin,
-                color: Colors.red,
-                size: 40,
-              ),
+            _destinationLocation = newDestination;
+            _addDestinationMarker(newDestination); // Add marker for destination
+            _googleMapController?.animateCamera(
+              CameraUpdate.newLatLngZoom(
+                newDestination,
+                15.0,
+              ), // Move map to destination
             );
           });
-          _mapController.move(
-            latlng,
-            15.0,
-          ); // Move map to the searched location
-          _resolveDestinationAddressFromLatLng(
-            latlng,
-          ); // Resolve address for the found location
+          await _resolveDestinationAddress(
+            newDestination,
+          ); // Resolve the address for display
+          _speechService.speak("Destination set to: $_destinationAddress");
         }
       } else {
         _speechService.speak(
-          "Could not find a location for '$query'. Please try a different query.",
+          "Could not find any location for that search query. Please try again.",
         );
+        if (mounted) {
+          setState(() {
+            _destinationAddress = 'Not found';
+            _clearDestinationMarker(); // Clear marker if not found
+          });
+        }
       }
     } catch (e) {
-      _logger.e("Error searching for destination: $e");
+      _logger.e("Error searching destination: $e");
       _speechService.speak(
         "An error occurred while searching for the destination.",
       );
+      if (mounted) {
+        setState(() {
+          _destinationAddress = 'Error searching';
+          _clearDestinationMarker(); // Clear marker on error
+        });
+      }
+    }
+  }
+
+  /// Adds a marker for the destination location.
+  void _addDestinationMarker(LatLng position) {
+    final markerId = MarkerId('destinationLocation');
+    final marker = Marker(
+      markerId: markerId,
+      position: position,
+      infoWindow: InfoWindow(
+        title: 'Destination',
+        snippet: _destinationAddress,
+      ),
+      icon: BitmapDescriptor.defaultMarkerWithHue(
+        BitmapDescriptor.hueRed,
+      ), // Red marker
+    );
+    if (mounted) {
+      setState(() {
+        _markers.removeWhere(
+          (m) => m.markerId == markerId,
+        ); // Remove old destination marker
+        _markers.add(marker);
+      });
+    }
+  }
+
+  /// Clears the destination marker from the map.
+  void _clearDestinationMarker() {
+    final markerId = MarkerId('destinationLocation');
+    if (mounted) {
+      setState(() {
+        _markers.removeWhere((m) => m.markerId == markerId);
+      });
     }
   }
 
@@ -281,7 +369,11 @@ class _MapScreenState extends State<MapScreen>
             altitudeAccuracy: 0.0,
             headingAccuracy: 0.0,
           ),
-          'destination': _destinationLocation!,
+          // Convert Google Maps LatLng back to latlong2.LatLng for ActiveNavigationScreen if it expects it
+          'destination': latlong2.LatLng(
+            _destinationLocation!.latitude,
+            _destinationLocation!.longitude,
+          ),
         },
       );
     } else {
@@ -291,9 +383,7 @@ class _MapScreenState extends State<MapScreen>
     }
   }
 
-  Future<void> _resolveDestinationAddressFromLatLng(
-    latlong2.LatLng latlng,
-  ) async {
+  Future<void> _resolveDestinationAddress(LatLng latlng) async {
     try {
       List<geocoding.Placemark> placemarks = await geocoding
           .placemarkFromCoordinates(latlng.latitude, latlng.longitude);
@@ -303,6 +393,8 @@ class _MapScreenState extends State<MapScreen>
           setState(() {
             _destinationAddress =
                 '${placemark.street}, ${placemark.locality}, ${placemark.country}';
+            // Update the info window of the existing destination marker
+            _addDestinationMarker(latlng);
           });
         }
       }
@@ -311,6 +403,7 @@ class _MapScreenState extends State<MapScreen>
       if (mounted) {
         setState(() {
           _destinationAddress = 'Destination address not found.';
+          _addDestinationMarker(latlng); // Update info window
         });
       }
     }
@@ -323,6 +416,7 @@ class _MapScreenState extends State<MapScreen>
     routeObserver.unsubscribe(this);
     _positionStreamSubscription?.cancel();
     _destinationController.dispose();
+    _googleMapController?.dispose(); // Dispose GoogleMapController
     super.dispose();
   }
 
@@ -434,89 +528,71 @@ class _MapScreenState extends State<MapScreen>
               ),
             ),
           Expanded(
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _currentLocation ?? latlong2.LatLng(0, 0),
-                initialZoom: 15.0,
-                onTap: (tapPosition, latlng) async {
-                  if (mounted) {
-                    // Added mounted check
-                    setState(() {
-                      _destinationLocation = latlng;
-                      _destinationMarker = Marker(
-                        point: _destinationLocation!,
-                        width: 80,
-                        height: 80,
-                        child: const Icon(
-                          Icons.location_pin,
-                          color: Colors.red,
-                          size: 40,
-                        ), // Corrected to child
-                      );
-                    });
-                  }
-                  try {
-                    // Moved address resolution logic here
-                    List<geocoding.Placemark> placemarks = await geocoding
-                        .placemarkFromCoordinates(
-                          latlng.latitude,
-                          latlng.longitude,
-                        );
-                    if (placemarks.isNotEmpty) {
-                      final placemark = placemarks.first;
-                      if (mounted) {
-                        // Added mounted check
-                        setState(() {
-                          _destinationAddress =
-                              '${placemark.street}, ${placemark.locality}, ${placemark.country}';
-                          _destinationController.text =
-                              _destinationAddress; // Update text field
-                        });
-                      }
-                      _speechService.speak(
-                        "Destination set to: $_destinationAddress",
-                      );
-                    }
-                  } catch (e) {
-                    _logger.e("Error resolving tapped address: $e");
-                    _speechService.speak(
-                      "Could not resolve address for this location.",
-                    );
-                    if (mounted) {
-                      // Added mounted check
-                      setState(() {
-                        _destinationAddress = 'Address not found';
-                      });
-                    }
-                  }
-                },
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.assistlens.app',
-                ),
-                CurrentLocationLayer(
-                  alignPositionOnUpdate: AlignOnUpdate.always,
-                  alignDirectionOnUpdate: AlignOnUpdate.always,
-                  style: LocationMarkerStyle(
-                    marker: DefaultLocationMarker(
-                      color: colorScheme.secondary,
-                      child: Icon(
-                        // Corrected to child
-                        Icons.navigation,
-                        color: colorScheme.onSecondary,
+            child:
+                _googleMapCurrentLocation == null
+                    ? const Center(child: CircularProgressIndicator())
+                    : GoogleMap(
+                      initialCameraPosition: CameraPosition(
+                        target: _googleMapCurrentLocation!,
+                        zoom: 15.0,
                       ),
+                      onMapCreated: (controller) {
+                        _googleMapController = controller;
+                        _updateCurrentLocationMarker(); // Add current location marker once map is created
+                      },
+                      myLocationEnabled:
+                          true, // Shows blue dot for current location
+                      myLocationButtonEnabled:
+                          false, // Hide default button, we have our own
+                      zoomControlsEnabled: false, // Hide default zoom controls
+                      markers: _markers, // Pass the set of markers
+                      onTap: (latlng) async {
+                        if (mounted) {
+                          setState(() {
+                            _destinationLocation = latlng;
+                            _addDestinationMarker(
+                              latlng,
+                            ); // Add/update marker for tapped location
+                          });
+                        }
+                        try {
+                          List<geocoding.Placemark> placemarks = await geocoding
+                              .placemarkFromCoordinates(
+                                latlng.latitude,
+                                latlng.longitude,
+                              );
+                          if (placemarks.isNotEmpty) {
+                            final placemark = placemarks.first;
+                            if (mounted) {
+                              setState(() {
+                                _destinationAddress =
+                                    '${placemark.street}, ${placemark.locality}, ${placemark.country}';
+                                _destinationController.text =
+                                    _destinationAddress; // Update text field
+                                // Update the info window of the existing destination marker
+                                _addDestinationMarker(latlng);
+                              });
+                            }
+                            _speechService.speak(
+                              "Destination set to: $_destinationAddress",
+                            );
+                          }
+                        } catch (e) {
+                          _logger.e("Error resolving tapped address: $e");
+                          _speechService.speak(
+                            "Could not resolve address for this location.",
+                          );
+                          if (mounted) {
+                            setState(() {
+                              _destinationAddress = 'Address not found';
+                              _addDestinationMarker(
+                                latlng,
+                              ); // Update info window even if address not found
+                            });
+                          }
+                        }
+                      },
                     ),
-                    markerSize: const Size(40, 40),
-                    markerDirection: MarkerDirection.heading,
-                  ),
-                ),
-                if (_destinationMarker != null)
-                  MarkerLayer(markers: [_destinationMarker!]),
-              ],
-            ),
           ),
           Padding(
             padding: const EdgeInsets.all(8.0),
@@ -527,8 +603,14 @@ class _MapScreenState extends State<MapScreen>
                   icon: Icons.my_location_rounded,
                   label: 'My Location',
                   onPressed: () {
-                    if (_currentLocation != null) {
-                      _mapController.move(_currentLocation!, 15.0);
+                    if (_googleMapCurrentLocation != null &&
+                        _googleMapController != null) {
+                      _googleMapController!.animateCamera(
+                        CameraUpdate.newLatLngZoom(
+                          _googleMapCurrentLocation!,
+                          15.0,
+                        ),
+                      );
                       _speechService.speak(
                         "Centered on your current location.",
                       );
@@ -551,10 +633,9 @@ class _MapScreenState extends State<MapScreen>
                   label: 'Clear Destination',
                   onPressed: () {
                     if (mounted) {
-                      // Added mounted check
                       setState(() {
                         _destinationLocation = null;
-                        _destinationMarker = null;
+                        _clearDestinationMarker(); // Clear marker
                         _destinationController.clear();
                         _destinationAddress = '';
                       });

@@ -10,7 +10,7 @@ import 'package:provider/provider.dart'; // Import Provider
 import '../services/speech_service.dart';
 // Removed Azure GPT Service as it's no longer directly used here.
 // import '../services/azure_gpt_service.dart';
-import '../services/chat_service.dart'; // Import ChatService-+
+// Import ChatService-+
 import '../../features/aniwa_chat/state/chat_state.dart'; // NEW: Import ChatState
 import '../../main.dart'; // For global logger
 
@@ -172,7 +172,7 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
     if (mounted) {
       final chatState = Provider.of<ChatState>(context, listen: false);
       // Assuming ChatState has a method to process commands and takes BuildContext
-      await chatState.processUserMessage(command, context);
+      await chatState.addUserMessage(command);
     } else {
       _logger.e("VoiceAssistantMixin: Context not mounted, cannot process command via ChatState.");
     }

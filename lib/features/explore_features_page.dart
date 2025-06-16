@@ -13,9 +13,9 @@ class ExploreFeaturesPage extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
-      backgroundColor: colorScheme.background,
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: colorScheme.background, // Match background
+        backgroundColor: colorScheme.surface, // Match background
         elevation: 0,
         title: Text(
           'Explore Features',
@@ -26,13 +26,6 @@ class ExploreFeaturesPage extends StatelessWidget {
           ),
         ),
         centerTitle: true,
-        leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: colorScheme.onSurface,
-          ),
-          onPressed: () => Navigator.pop(context),
-        ),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
@@ -68,7 +61,7 @@ class ExploreFeaturesPage extends StatelessWidget {
             Text(
               'Try Premium',
               style: textTheme.headlineSmall?.copyWith(
-                color: colorScheme.onBackground,
+                color: colorScheme.onSurface,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -146,7 +139,7 @@ class ExploreFeaturesPage extends StatelessWidget {
             Text(
               'Explore Features',
               style: textTheme.headlineSmall?.copyWith(
-                color: colorScheme.onBackground,
+                color: colorScheme.onSurface,
                 fontWeight: FontWeight.bold,
               ),
             ),

@@ -1,171 +1,355 @@
-// lib/main.dart
-import 'package:assist_lens/features/explore_features_page.dart';
+// main.dart
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:logger/logger.dart';
+import 'package:vibration/vibration.dart'; // Added for vibration
 
 // Import your services
-import 'core/routing/app_router.dart'; // Import the new AppRouter
+import 'core/routing/app_router.dart';
 import 'core/services/network_service.dart';
 import 'core/services/speech_service.dart';
-import 'core/services/gemini_service.dart'; // Changed from azure_gpt_service.dart to gemini_service.dart
-import 'core/services/face_recognizer_service.dart'; // NEW: Import FaceRecognizerService
-import 'features/aniwa_chat/state/chat_state.dart'; // Import the new ChatState
-import 'features/aniwa_chat/aniwa_chat_page.dart'; // Still needed for _pages in MainAppWrapper
-// Import your pages
+import 'core/services/gemini_service.dart';
+import 'core/services/face_recognizer_service.dart';
+import 'core/services/text_reader_service.dart';
+import 'core/services/history_services.dart';
+import 'core/services/chat_service.dart';
+import 'core/services/camera_service.dart'; // NEW: Import CameraService
+
+// Import your pages/states
 import 'state/app_state.dart';
-import './features/home/home_page.dart';
-import './features/face_recognition/facial_recognition_state.dart'; // Import FacialRecognitionState
-import './features/scene_description/scene_description_state.dart'; // Import SceneDescriptionState
-import './features/emergency/emergency_state.dart'; // Import EmergencyState
-import './features/text_reader/text_reader_state.dart'; // Import TextReaderState
-import './core/services/history_services.dart';
-import './core/services/chat_service.dart'; // Import ChatService
+import 'features/aniwa_chat/state/chat_state.dart';
+import 'features/face_recognition/facial_recognition_state.dart';
+import 'features/scene_description/scene_description_state.dart';
+import 'features/emergency/emergency_state.dart';
+import 'features/text_reader/text_reader_state.dart';
 
 // Global logger instance
 final logger = Logger(
   printer: PrettyPrinter(
-    methodCount: 2, // number of method calls to be displayed
-    errorMethodCount: 8, // number of method calls if stacktrace is provided
-    lineLength: 120, // width of the output
-    colors: true, // Colorful log messages
-    printEmojis: true, // Print an emoji for each log message
-    dateTimeFormat: DateTimeFormat.none, // Use this instead of printTime, which is deprecated
+    methodCount: 2,
+    errorMethodCount: 8,
+    lineLength: 120,
+    colors: true,
+    printEmojis: true,
+    dateTimeFormat: DateTimeFormat.none,
   ),
 );
 
 // Global RouteObserver for navigation awareness
 final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
 
+// Global Key for NavigatorState to allow navigation from anywhere in the app
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 /// Main entry point for the Assist Lens application.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final prefs = await SharedPreferences.getInstance();
 
-  await Firebase.initializeApp(
-    name: 'assist_lens', // Use the name from your Firebase project
-    options: const FirebaseOptions(
-      apiKey: 'YOUR_API_KEY', // IMPORTANT: Replace with your actual Firebase API Key
-      appId: 'YOUR_APP_ID', // IMPORTANT: Replace with your actual Firebase App ID
-      messagingSenderId: 'YOUR_MESSAGING_SENDER_ID', // IMPORTANT: Replace with your actual Firebase Messaging Sender ID
-      projectId: 'YOUR_PROJECT_ID', // IMPORTANT: Replace with your actual Firebase Project ID
-    ),
-  );
+  try {
+    final prefs = await SharedPreferences.getInstance();
 
-  // Initialize core services
-  final networkService = NetworkService();
-  await networkService.init(); // Check initial connectivity
+    // Initialize Firebase
+    await Firebase.initializeApp(
+      name: 'assist_lens',
+      options: const FirebaseOptions(
+        apiKey: 'YOUR_API_KEY', // Replace with your actual API Key
+        appId: 'YOUR_APP_ID', // Replace with your actual App ID
+        messagingSenderId:
+            'YOUR_MESSAGING_SENDER_ID', // Replace with your actual Messaging Sender ID
+        projectId: 'YOUR_PROJECT_ID', // Replace with your actual Project ID
+      ),
+    );
 
-  final speechService = SpeechService();
-  await speechService.init(); // Initialize TTS, STT, and Porcupine
+    // Initialize core services
+    final networkService = NetworkService();
+    await networkService.init();
 
-  final historyService = HistoryService(prefs); // Pass prefs to HistoryService
-  await historyService.init(); // Initialize HistoryService
+    final speechService = SpeechService();
+    await speechService.init(); // Initialize speech service here
 
-  // Initialize GeminiService, injecting NetworkService
-  final geminiService = GeminiService(networkService); // Use GeminiService instead of AzureGptService
+    final historyService = HistoryService(prefs);
+    await historyService.init();
 
-  // Initialize FaceRecognizerService (singleton)
-  final faceRecognizerService = FaceRecognizerService();
-  await faceRecognizerService.loadModel(); // Ensure model is loaded on app start
+    final geminiService = GeminiService(networkService);
+    final faceRecognizerService = FaceRecognizerService();
+    final textReaderService = TextReaderServices();
+    final cameraService = CameraService(); // NEW: Initialize CameraService
 
-  runApp(
-    MultiProvider(
-      providers: [
-        // AppState is a ChangeNotifier and uses SharedPreferences
-        ChangeNotifierProvider<AppState>.value(
-          value: AppState(prefs),
-        ), // Initialize AppState with prefs
-        // NetworkService is a ChangeNotifier
-        ChangeNotifierProvider<NetworkService>.value(value: networkService),
+    // Load face recognition model on startup
+    await faceRecognizerService.loadModel();
 
-        // SpeechService is now a ChangeNotifier, use ChangeNotifierProvider.value
-        ChangeNotifierProvider<SpeechService>.value(value: speechService),
+    runApp(
+      MultiProvider(
+        providers: [
+          // Core app state
+          ChangeNotifierProvider<AppState>(create: (_) => AppState(prefs)),
 
-        // GeminiService is not a ChangeNotifier but is a singleton, use Provider.value
-        Provider<GeminiService>.value(value: geminiService), // Use GeminiService
+          // Core services
+          ChangeNotifierProvider<NetworkService>.value(value: networkService),
+          ChangeNotifierProvider<SpeechService>.value(value: speechService),
+          ChangeNotifierProvider<HistoryService>.value(value: historyService),
+          Provider<GeminiService>.value(value: geminiService),
+          Provider<FaceRecognizerService>.value(value: faceRecognizerService),
+          Provider<TextReaderServices>.value(value: textReaderService),
+          ChangeNotifierProvider<CameraService>.value(
+            value: cameraService,
+          ), // NEW: Provide CameraService
+          // Chat state with proper dependency injection
+          ChangeNotifierProvider<ChatState>(
+            create: (context) {
+              final speech = context.read<SpeechService>();
+              final gemini = context.read<GeminiService>();
+              final history = context.read<HistoryService>();
+              final network = context.read<NetworkService>();
 
-        // HistoryService is a ChangeNotifier
-        ChangeNotifierProvider<HistoryService>.value(value: historyService),
+              final chatState = ChatState(speech, gemini, history, network);
 
-        // FaceRecognizerService is a singleton. Provide its instance.
-        Provider<FaceRecognizerService>.value(value: faceRecognizerService), // NEW: Provide FaceRecognizerService
+              // Set the navigation callback for ChatState
+              chatState.onNavigateRequested = (routeName, {arguments}) {
+                if (navigatorKey.currentState != null &&
+                    navigatorKey.currentState!.mounted) {
+                  navigatorKey.currentState!.pushNamed(
+                    routeName,
+                    arguments: arguments,
+                  );
+                } else {
+                  logger.w(
+                    "Navigator state not available for navigation to $routeName.",
+                  );
+                }
+              };
 
-        // Provide ChatState and its dependencies. ChatService is created here.
-        ChangeNotifierProvider<ChatState>(
-          create: (context) {
-            final speech = context.read<SpeechService>();
-            final gemini = context.read<GeminiService>(); // Use GeminiService
-            final history = context.read<HistoryService>();
-            final network = context.read<NetworkService>();
+              // Initialize ChatService with proper callbacks AFTER ChatState is created
+              chatState.chatService = ChatService(
+                speech,
+                gemini,
+                history,
+                network,
+                onProcessingStatusChanged: chatState.setIsProcessingAI,
+                onSpeak: chatState.speak,
+                onVibrate: () async {
+                  if (await Vibration.hasVibrator() ?? false) {
+                    Vibration.vibrate(duration: 50);
+                  }
+                },
+                // The onNavigate for ChatService should call ChatState's navigateTo method
+                onNavigate: chatState.navigateTo,
+                onAddUserMessage:
+                    chatState.addUserMessage, // Pass callback for user messages
+                onAddAssistantMessage:
+                    chatState
+                        .addAssistantMessage, // Pass callback for assistant messages
+              );
 
-            // Create ChatState first, then provide its callbacks to ChatService
-            final chatState = ChatState(speech, gemini, history, network);
+              return chatState;
+            },
+          ),
 
-            // Now create ChatService using the ChatState's methods as callbacks
-            final chatService = ChatService(
-              speech,
-              gemini,
-              history,
-              network,
-              onHistoryUpdated: chatState.updateHistory,
-              onProcessingStatusChanged: chatState.setIsProcessingAI,
-              onSpeak: chatState.speak,
-              onVibrate: chatState.vibrate,
-              onNavigate: chatState.navigateTo, // Pass chatState.navigateTo
-            );
-            // Assign the created chatService to ChatState if it needs it internally
-            chatState.chatService = chatService; // Assuming you add this setter in ChatState
-            return chatState;
-          },
-        ),
+          // Feature states
+          ChangeNotifierProvider<FacialRecognitionState>(
+            create:
+                (context) => FacialRecognitionState(
+                  networkService: context.read<NetworkService>(),
+                  speechService: context.read<SpeechService>(),
+                  faceRecognizerService: context.read<FaceRecognizerService>(),
+                  cameraService:
+                      context
+                          .read<CameraService>(), // NEW: Inject CameraService
+                ),
+          ),
+          ChangeNotifierProvider<SceneDescriptionState>(
+            create:
+                (context) => SceneDescriptionState(
+                  context.read<NetworkService>(),
+                  context.read<SpeechService>(), // NEW: Inject CameraService
+                  context.read<GeminiService>(),
+                  context.read<CameraService>(),
+                ),
+          ),
+          ChangeNotifierProvider<EmergencyState>(
+            create: (_) => EmergencyState(),
+          ),
+          ChangeNotifierProvider<TextReaderState>(
+            create:
+                (context) => TextReaderState(
+                  speechService: context.read<SpeechService>(),
+                  geminiService: context.read<GeminiService>(),
+                  networkService: context.read<NetworkService>(),
+                  historyService: context.read<HistoryService>(),
+                  textReaderService: context.read<TextReaderServices>(),
+                  cameraService:
+                      context
+                          .read<CameraService>(), // NEW: Inject CameraService
+                ),
+          ),
+        ],
+        child: const AssistLensApp(),
+      ),
+    );
+  } catch (e) {
+    logger.e('Failed to initialize app: $e');
+    // You might want to show an error screen here
+    runApp(const ErrorApp());
+  }
+}
 
-        // Provide ChatService explicitly for other parts of the app to read if needed,
-        // although ChatState now manages its creation and internal use.
-        Provider<ChatService>(
-          create: (context) {
-            return ChatService(
-              context.read<SpeechService>(),
-              context.read<GeminiService>(), // Use GeminiService
-              context.read<HistoryService>(),
-              context.read<NetworkService>(),
-              onHistoryUpdated: (history) {},
-              onProcessingStatusChanged: (status) {},
-              onSpeak: (text) async {},
-              onVibrate: () {},
-              onNavigate: (routeName, {arguments}) {},
-            );
-          },
-        ),
+/// Error app to show when initialization fails
+class ErrorApp extends StatelessWidget {
+  const ErrorApp({super.key});
 
-        // NEW: Updated FacialRecognitionState provider to inject dependencies
-        ChangeNotifierProvider<FacialRecognitionState>(
-          create: (context) => FacialRecognitionState(
-            networkService: context.read<NetworkService>(),
-            speechService: context.read<SpeechService>(),
-            faceRecognizerService: context.read<FaceRecognizerService>(), // Injected
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Colors.red),
+              const SizedBox(height: 16),
+              const Text(
+                'Failed to initialize app',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text('Please restart the application'),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  // You could implement app restart logic here
+                },
+                child: const Text('Retry'),
+              ),
+            ],
           ),
         ),
-        ChangeNotifierProvider(
-          create: (context) => SceneDescriptionState(
-            context.read<NetworkService>(), // Inject NetworkService
-            context.read<GeminiService>(), // Inject GeminiService
-          ),
-        ),
-        ChangeNotifierProvider(create: (_) => EmergencyState()),
-        ChangeNotifierProvider(
-          create: (context) => TextReaderState(
-            speechService: context.read<SpeechService>(),
-            geminiService: context.read<GeminiService>(), // Inject GeminiService
-            networkService: context.read<NetworkService>(), // Inject NetworkService
-          ),
-        ),
-      ],
-      child: const AssistLensApp(),
-    ),
-  );
+      ),
+    );
+  }
+}
+
+// Custom theme extension for chat-specific colors
+class ChatThemeExtension extends ThemeExtension<ChatThemeExtension> {
+  const ChatThemeExtension({
+    required this.chatBackground,
+    required this.userMessageGradient,
+    required this.aiMessageBackground,
+    required this.aiAvatarGradient,
+    required this.userAvatarGradient,
+    required this.speakingGradient,
+    required this.inputBackground,
+    required this.inputBorder,
+    required this.focusedInputBorder,
+    required this.sendButtonGradient,
+    required this.wakeWordColor,
+    required this.statusColors,
+  });
+
+  final LinearGradient chatBackground;
+  final LinearGradient userMessageGradient;
+  final Color aiMessageBackground;
+  final LinearGradient aiAvatarGradient;
+  final LinearGradient userAvatarGradient;
+  final LinearGradient speakingGradient;
+  final Color inputBackground;
+  final Color inputBorder;
+  final Color focusedInputBorder;
+  final LinearGradient sendButtonGradient;
+  final Color wakeWordColor;
+  final StatusColors statusColors;
+
+  @override
+  ChatThemeExtension copyWith({
+    LinearGradient? chatBackground,
+    LinearGradient? userMessageGradient,
+    Color? aiMessageBackground,
+    LinearGradient? aiAvatarGradient,
+    LinearGradient? userAvatarGradient,
+    LinearGradient? speakingGradient,
+    Color? inputBackground,
+    Color? inputBorder,
+    Color? focusedInputBorder,
+    LinearGradient? sendButtonGradient,
+    Color? wakeWordColor,
+    StatusColors? statusColors,
+  }) {
+    return ChatThemeExtension(
+      chatBackground: chatBackground ?? this.chatBackground,
+      userMessageGradient: userMessageGradient ?? this.userMessageGradient,
+      aiMessageBackground: aiMessageBackground ?? this.aiMessageBackground,
+      aiAvatarGradient: aiAvatarGradient ?? this.aiAvatarGradient,
+      userAvatarGradient: userAvatarGradient ?? this.userAvatarGradient,
+      speakingGradient: speakingGradient ?? this.speakingGradient,
+      inputBackground: inputBackground ?? this.inputBackground,
+      inputBorder: inputBorder ?? this.inputBorder,
+      focusedInputBorder: focusedInputBorder ?? this.focusedInputBorder,
+      sendButtonGradient: sendButtonGradient ?? this.sendButtonGradient,
+      wakeWordColor: wakeWordColor ?? this.wakeWordColor,
+      statusColors: statusColors ?? this.statusColors,
+    );
+  }
+
+  @override
+  ChatThemeExtension lerp(ChatThemeExtension? other, double t) {
+    if (other is! ChatThemeExtension) {
+      return this;
+    }
+    return ChatThemeExtension(
+      chatBackground:
+          LinearGradient.lerp(chatBackground, other.chatBackground, t)!,
+      userMessageGradient:
+          LinearGradient.lerp(
+            userMessageGradient,
+            other.userMessageGradient,
+            t,
+          )!,
+      aiMessageBackground:
+          Color.lerp(aiMessageBackground, other.aiMessageBackground, t)!,
+      aiAvatarGradient:
+          LinearGradient.lerp(aiAvatarGradient, other.aiAvatarGradient, t)!,
+      userAvatarGradient:
+          LinearGradient.lerp(userAvatarGradient, other.userAvatarGradient, t)!,
+      speakingGradient:
+          LinearGradient.lerp(speakingGradient, other.speakingGradient, t)!,
+      inputBackground: Color.lerp(inputBackground, other.inputBackground, t)!,
+      inputBorder: Color.lerp(inputBorder, other.inputBorder, t)!,
+      focusedInputBorder:
+          Color.lerp(focusedInputBorder, other.focusedInputBorder, t)!,
+      sendButtonGradient:
+          LinearGradient.lerp(sendButtonGradient, other.sendButtonGradient, t)!,
+      wakeWordColor: Color.lerp(wakeWordColor, other.wakeWordColor, t)!,
+      statusColors: StatusColors.lerp(statusColors, other.statusColors, t),
+    );
+  }
+}
+
+// Status colors for different chat states
+class StatusColors {
+  const StatusColors({
+    required this.thinking,
+    required this.speaking,
+    required this.listening,
+    required this.wakeWord,
+    required this.ready,
+  });
+
+  final Color thinking;
+  final Color speaking;
+  final Color listening;
+  final Color wakeWord;
+  final Color ready;
+
+  static StatusColors lerp(StatusColors a, StatusColors b, double t) {
+    return StatusColors(
+      thinking: Color.lerp(a.thinking, b.thinking, t)!,
+      speaking: Color.lerp(a.speaking, b.speaking, t)!,
+      listening: Color.lerp(a.listening, b.listening, t)!,
+      wakeWord: Color.lerp(a.wakeWord, b.wakeWord, t)!,
+      ready: Color.lerp(a.ready, b.ready, t)!,
+    );
+  }
 }
 
 class AssistLensApp extends StatefulWidget {
@@ -176,42 +360,90 @@ class AssistLensApp extends StatefulWidget {
 }
 
 class _AssistLensAppState extends State<AssistLensApp> {
-  ThemeMode _themeMode = ThemeMode.light;
+  ThemeMode _themeMode = ThemeMode.system; // Default to system theme
 
   void toggleTheme() {
     setState(() {
-      _themeMode =
-          _themeMode == ThemeMode.light ? ThemeMode.dark : ThemeMode.light;
-      logger.i('Theme toggled to $_themeMode');
+      _themeMode = switch (_themeMode) {
+        ThemeMode.light => ThemeMode.dark,
+        ThemeMode.dark => ThemeMode.system,
+        ThemeMode.system => ThemeMode.light,
+      };
+      logger.i('Theme changed to $_themeMode');
     });
   }
 
-  // Define light theme colors matching the image
+  // Define light theme colors matching the image with chat theme extensions
   final ThemeData lightTheme = ThemeData(
     brightness: Brightness.light,
-    // primarySwatch is deprecated, use colorScheme
     colorScheme: const ColorScheme.light(
-      primary: Color(0xFF4A65FB), // Main blue for buttons, accents (from image)
-      onPrimary: Colors.white, // Text/icons on primary
-      secondary: Color(0xFF00BFA5), // Green from "Scheduling" (from image)
-      onSecondary: Colors.white, // Text/icons on secondary
-      tertiary: Color(0xFF7D59F0), // Purple from "Search by image" (from image)
-      onTertiary: Colors.white, // Text/icons on tertiary
-      background: Color(0xFFF7F7F7), // Background for scaffold (from image)
-      onBackground: Color(0xFF34495E), // Text on background (from image)
-      surface: Color(0xFFF7F7F7), // App bar background, cards, text fields (from image)
-      onSurface: Color(0xFF34495E), // Text/icons on surface (from image)
-      primaryContainer: Color(0xFFE0E6FD), // Light blue background (user message bubbles, premium card)
-      onPrimaryContainer: Color(0xFF2C3E50), // Text on primary container
-      secondaryContainer: Color(0xFFC3B0FB), // Light purple background (Aniwa message bubbles, typing indicator)
-      onSecondaryContainer: Color(0xFF2C3E50), // Text on secondary container
+      primary: Color(0xFF4A65FB),
+      onPrimary: Colors.white,
+      secondary: Color(0xFF00BFA5),
+      onSecondary: Colors.white,
+      tertiary: Color(0xFF7D59F0),
+      onTertiary: Colors.white,
+      surface: Color(0xFFF7F7F7),
+      onSurface: Color(0xFF34495E),
+      primaryContainer: Color(0xFFE0E6FD),
+      onPrimaryContainer: Color(0xFF2C3E50),
+      secondaryContainer: Color(0xFFC3B0FB),
+      onSecondaryContainer: Color(0xFF2C3E50),
       error: Colors.redAccent,
       onError: Colors.white,
-      shadow: Color(0xFF000000), // Explicitly define shadow color for use in HomePage
+      shadow: Color(0xFF000000), // Light gradient equivalent
+      onSurfaceVariant: Color(0xFF2C3E50),
+      // Added missing colors to match potential usage
+      surfaceContainerHigh: Color(0xFFE0E0E0), // Example light color
+      surfaceContainerHighest: Color(0xFFD0D0D0), // Example light color
+      tertiaryContainer: Color(
+        0xFFEBE0FF,
+      ), // Example light color for tertiary container
     ),
+    extensions: const [
+      ChatThemeExtension(
+        chatBackground: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFFE8F4FD), // Light blue
+            Color(0xFFF0F0FF), // Light purple-white
+            Color(0xFFE8E4FF), // Light purple
+          ],
+          stops: [0.0, 0.6, 1.0],
+        ),
+        userMessageGradient: LinearGradient(
+          colors: [Color(0xFF4A65FB), Color(0xFF7D59F0)],
+        ),
+        aiMessageBackground: Color(0xFFFFFFFF),
+        aiAvatarGradient: LinearGradient(
+          colors: [Color(0xFF7D59F0), Color(0xFFE91E63)],
+        ),
+        userAvatarGradient: LinearGradient(
+          colors: [Color(0xFF4A65FB), Color(0xFF00BFA5)],
+        ),
+        speakingGradient: LinearGradient(
+          colors: [Color(0xFF7D59F0), Color(0xFF4A65FB), Color(0xFF00BFA5)],
+        ),
+        inputBackground: Color(0xFFFFFFFF),
+        inputBorder: Color(0xFFE0E6FD),
+        focusedInputBorder: Color(0xFF4A65FB),
+        sendButtonGradient: LinearGradient(
+          colors: [Color(0xFF4A65FB), Color(0xFF7D59F0)],
+        ),
+        wakeWordColor: Color(0xFF7D59F0),
+        statusColors: StatusColors(
+          thinking: Color(0xFFFFC107),
+          speaking: Color(0xFF4CAF50),
+          listening: Color(0xFF4A65FB),
+          wakeWord: Color(0xFF7D59F0),
+          ready: Color(0xFF9E9E9E),
+        ),
+      ),
+    ],
     appBarTheme: const AppBarTheme(
-      backgroundColor: Color(0xFFF7F7F7), // Matches app bar in image
-      foregroundColor: Color(0xFF2C3E50), // Title/text color
+      backgroundColor: Color(0xFFF7F7F7),
+      foregroundColor: Color(0xFF2C3E50),
       elevation: 0,
       centerTitle: true,
       titleTextStyle: TextStyle(
@@ -223,74 +455,102 @@ class _AssistLensAppState extends State<AssistLensApp> {
     cardTheme: CardTheme(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Colors.white, // Card background
-      shadowColor: Colors.grey.withOpacity(0.1), // Subtle shadow for cards
-    ),
-    bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-      selectedItemColor: Color(0xFF4A65FB), // Active tab color
-      unselectedItemColor: Color(0xFF9E9E9E), // Inactive tab color
-      backgroundColor: Colors.white, // Nav bar background (container for ClipRRect)
-      type: BottomNavigationBarType.fixed,
-      showSelectedLabels: true,
-      showUnselectedLabels: true,
-      selectedLabelStyle: TextStyle(fontWeight: FontWeight.w600),
-      unselectedLabelStyle: TextStyle(fontWeight: FontWeight.w500),
+      color: Colors.white,
+      shadowColor: Colors.grey.withOpacity(0.1),
     ),
     textTheme: const TextTheme(
-      // Ensure these match the actual usage in other files (e.g., HomePage, ChatPage)
       headlineSmall: TextStyle(
         fontSize: 24,
         fontWeight: FontWeight.bold,
         color: Color(0xFF2C3E50),
-      ), // Primary text color for titles like "Quick Actions"
+      ),
       titleMedium: TextStyle(
         fontSize: 18,
         fontWeight: FontWeight.w600,
         color: Color(0xFF2C3E50),
-      ), // Primary text color for card titles, app bar titles
-      bodyMedium: TextStyle(
-        fontSize: 16,
-        color: Color(0xFF2C3E50),
-      ), // Primary text color for general body text
-      bodySmall: TextStyle(
-        fontSize: 14,
-        color: Color(0xFF9E9E9E), // Secondary text color for descriptions
       ),
+      bodyMedium: TextStyle(fontSize: 16, color: Color(0xFF2C3E50)),
+      bodySmall: TextStyle(fontSize: 14, color: Color(0xFF9E9E9E)),
       labelLarge: TextStyle(
         fontSize: 14,
         fontWeight: FontWeight.w600,
-        color: Color(0xFF4A65FB), // For button labels
+        color: Color(0xFF4A65FB),
       ),
     ),
-    // shadowColor property from root ThemeData if needed for general use
-    shadowColor: Colors.black, // Default shadow color
+    shadowColor: Colors.black,
   );
 
-  // Define dark theme colors complementing the light theme
+  // Define dark theme colors complementing the chat screen
   final ThemeData darkTheme = ThemeData(
     brightness: Brightness.dark,
     colorScheme: const ColorScheme.dark(
-      primary: Color(0xFF4A65FB), // Same primary blue
+      primary: Color(0xFF4A65FB),
       onPrimary: Colors.white,
-      secondary: Color(0xFF00BFA5), // Green
+      secondary: Color(0xFF00BFA5),
       onSecondary: Colors.white,
-      tertiary: Color(0xFF7D59F0), // Purple - same as light mode
+      tertiary: Color(0xFF7D59F0),
       onTertiary: Colors.white,
-      background: Color(0xFF121212), // Dark background
-      onBackground: Colors.white70, // Text on dark background
-      surface: Color(0xFF1E1E1E), // Darker surface for cards, app bar, text fields
-      onSurface: Colors.white70, // Text/icons on surface
-      primaryContainer: Color(0xFF2D2058), // Darker blue/purple container
+      surface: Color(0xFF0A0E1A), // Dark chat background
+      onSurface: Colors.white70,
+      primaryContainer: Color(0xFF1A1F3A),
       onPrimaryContainer: Colors.white,
-      secondaryContainer: Color(0xFF4A2B8B), // Darker purple container
+      secondaryContainer: Color(0xFF2D1B69),
       onSecondaryContainer: Colors.white,
       error: Colors.redAccent,
       onError: Colors.white,
       shadow: Color(0xFF000000),
+      onSurfaceVariant: Colors.white70,
+      // Added missing colors to match potential usage
+      surfaceContainerHigh: Color(0xFF2A2E4A), // Example dark color
+      surfaceContainerHighest: Color(0xFF3A3E5A), // Example dark color
+      tertiaryContainer: Color(
+        0xFF4D3A8A,
+      ), // Example dark color for tertiary container
     ),
+    extensions: const [
+      ChatThemeExtension(
+        chatBackground: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF0A0E1A), // Dark blue-black
+            Color(0xFF1A1F3A), // Medium dark blue
+            Color(0xFF2D1B69), // Dark purple
+          ],
+          stops: [0.0, 0.6, 1.0],
+        ),
+        userMessageGradient: LinearGradient(
+          colors: [Color(0xFF4A65FB), Color(0xFF7D59F0)],
+        ),
+        aiMessageBackground: Color(0x1AFFFFFF), // 10% white opacity
+        aiAvatarGradient: LinearGradient(
+          colors: [Color(0xFF7D59F0), Color(0xFFE91E63)],
+        ),
+        userAvatarGradient: LinearGradient(
+          colors: [Color(0xFF4A65FB), Color(0xFF00BFA5)],
+        ),
+        speakingGradient: LinearGradient(
+          colors: [Color(0xFF7D59F0), Color(0xFF4A65FB), Color(0xFF00BFA5)],
+        ),
+        inputBackground: Color(0x1AFFFFFF), // 10% white opacity
+        inputBorder: Color(0x33FFFFFF), // 20% white opacity
+        focusedInputBorder: Color(0x80_4A65FB), // 50% opacity blue
+        sendButtonGradient: LinearGradient(
+          colors: [Color(0xFF4A65FB), Color(0xFF7D59F0)],
+        ),
+        wakeWordColor: Color(0xFF7D59F0),
+        statusColors: StatusColors(
+          thinking: Color(0xFFFFC107),
+          speaking: Color(0xFF4CAF50),
+          listening: Color(0xFF4A65FB),
+          wakeWord: Color(0xFFBA68C8), // Light purple
+          ready: Color(0xFF9E9E9E),
+        ),
+      ),
+    ],
     appBarTheme: const AppBarTheme(
-      backgroundColor: Color(0xFF1E1E1E), // Dark app bar
-      foregroundColor: Colors.white, // Title/text color
+      backgroundColor: Color(0xFF0A0E1A),
+      foregroundColor: Colors.white,
       elevation: 0,
       centerTitle: true,
       titleTextStyle: TextStyle(
@@ -302,38 +562,22 @@ class _AssistLensAppState extends State<AssistLensApp> {
     cardTheme: CardTheme(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: const Color(0xFF2A2A2A), // Dark card background
+      color: const Color(0xFF1A1F3A),
       shadowColor: Colors.white.withOpacity(0.05),
-    ),
-    bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-      selectedItemColor: Color(0xFF4A65FB), // Active tab color
-      unselectedItemColor: Color(0xFF757575), // Inactive tab color
-      backgroundColor: Color(0xFF1E1E1E), // Nav bar background
-      type: BottomNavigationBarType.fixed,
-      showSelectedLabels: true,
-      showUnselectedLabels: true,
-      selectedLabelStyle: TextStyle(fontWeight: FontWeight.w600),
-      unselectedLabelStyle: TextStyle(fontWeight: FontWeight.w500),
     ),
     textTheme: const TextTheme(
       headlineSmall: TextStyle(
         fontSize: 24,
         fontWeight: FontWeight.bold,
         color: Colors.white,
-      ), // Light text
+      ),
       titleMedium: TextStyle(
         fontSize: 18,
         fontWeight: FontWeight.w600,
         color: Colors.white,
-      ), // Light text
-      bodyMedium: TextStyle(
-        fontSize: 16,
-        color: Colors.white70,
-      ), // Secondary text
-      bodySmall: TextStyle(
-        fontSize: 14,
-        color: Color(0xFF9E9E9E),
-      ), // Tertiary text
+      ),
+      bodyMedium: TextStyle(fontSize: 16, color: Colors.white70),
+      bodySmall: TextStyle(fontSize: 14, color: Color(0xFF9E9E9E)),
       labelLarge: TextStyle(
         fontSize: 14,
         fontWeight: FontWeight.w600,
@@ -345,22 +589,29 @@ class _AssistLensAppState extends State<AssistLensApp> {
 
   @override
   Widget build(BuildContext context) {
-    final bool hasCompletedOnboarding = context.select<AppState, bool>((s) => s.onboardingComplete);
-
-    return ThemeProvider(
-      themeMode: _themeMode,
-      toggleTheme: toggleTheme,
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Assist Lens',
-        theme: lightTheme,
-        darkTheme: darkTheme,
-        themeMode: _themeMode,
-        initialRoute:
-            hasCompletedOnboarding ? AppRouter.mainAppWrapper : AppRouter.onboarding,
-        onGenerateRoute: AppRouter.onGenerateRoute,
-        navigatorObservers: [routeObserver],
-      ),
+    return Consumer<AppState>(
+      builder: (context, appState, child) {
+        return ThemeProvider(
+          themeMode: _themeMode,
+          toggleTheme: toggleTheme,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            title: 'Assist Lens',
+            theme: lightTheme,
+            darkTheme: darkTheme,
+            themeMode: _themeMode,
+            // Set the global navigatorKey here
+            navigatorKey: navigatorKey,
+            // Directly route to HomePage instead of MainAppWrapper
+            initialRoute:
+                appState.onboardingComplete
+                    ? AppRouter.mainAppWrapper
+                    : AppRouter.onboarding,
+            onGenerateRoute: AppRouter.onGenerateRoute,
+            navigatorObservers: [routeObserver],
+          ),
+        );
+      },
     );
   }
 }
@@ -386,99 +637,5 @@ class ThemeProvider extends InheritedWidget {
   @override
   bool updateShouldNotify(ThemeProvider oldWidget) {
     return oldWidget.themeMode != themeMode;
-  }
-}
-
-class MainAppWrapper extends StatefulWidget {
-  const MainAppWrapper({super.key});
-
-  @override
-  State<MainAppWrapper> createState() => _MainAppWrapperState();
-}
-
-class _MainAppWrapperState extends State<MainAppWrapper> {
-  // Use AppState's currentTabIndex
-  // int _selectedIndex = 0; // Removed local state
-
-  final List<Widget> _pages = [
-    const HomePage(),
-    const AniwaChatPage(isForTabInitialization: true), // Mark for tab init
-    const ExploreFeaturesPage(),
-    const Center(
-      child: Text(
-        'Profile Page Content - Coming Soon!',
-        style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-      ),
-    ), // Placeholder for Profile
-  ];
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // No need to set initial _selectedIndex here; it's read from AppState.
-  }
-
-  void _onItemTapped(int index) {
-    // Update the index in AppState
-    Provider.of<AppState>(context, listen: false).currentTabIndex = index;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final appState = context.watch<AppState>(); // Watch AppState for currentTabIndex
-
-    final Color navBarBg = colorScheme.surface;
-    final Color navBarShadowColor = colorScheme.shadow.withOpacity(0.1); // Using theme's shadow color
-
-    return Scaffold(
-      body: IndexedStack(index: appState.currentTabIndex, children: _pages), // Use AppState index
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: navBarBg,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: navBarShadowColor,
-              blurRadius: 10,
-              spreadRadius: 2,
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
-          ),
-          child: BottomNavigationBar(
-            backgroundColor: Colors.transparent, // Ensures Container's color is visible
-            elevation: 0,
-            currentIndex: appState.currentTabIndex, // Use AppState index
-            onTap: _onItemTapped,
-            items: const <BottomNavigationBarItem>[
-              BottomNavigationBarItem(
-                icon: Icon(Icons.home_rounded),
-                label: 'Home',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.chat_rounded),
-                label: 'Chat',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.explore_rounded),
-                label: 'Explore',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.person_rounded),
-                label: 'Profile',
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
