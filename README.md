@@ -183,7 +183,7 @@ flutter run
 
 ## 🗣️ Using the App
 
-* Say **“Hey Assist Lens”** to activate the assistant.
+* Say **“Assistive Lens”** to activate the assistant.
 
 * Use commands like:
 
