@@ -1,247 +1,364 @@
 // lib/features/scene_description/scene_description_state.dart
 import 'dart:async';
 import 'dart:io';
-import 'dart:convert'; // Import for base64Encode
-
-import 'package:camera/camera.dart';
-import 'package:flutter/material.dart'; // Import for WidgetsBinding.instance.addPostFrameCallback
+// Added for base64Encode
+import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:image_picker/image_picker.dart'; // For picking images from gallery
+import 'package:camera/camera.dart'; // For CameraImage (used in _processImageForAutoDescription for its bytes)
+import 'package:path_provider/path_provider.dart'; // For getTemporaryDirectory
 
-import '../../core/services/network_service.dart';
-import '../../core/services/gemini_service.dart'; // Import GeminiService
 import '../../main.dart'; // For global logger
+import '../../core/services/network_service.dart';
+import '../../core/services/speech_service.dart';
+import '../../core/services/gemini_service.dart';
+import '../../core/services/camera_service.dart'; // Import CameraService
+import '../../core/utils/throttler.dart'; // Import Throttler
 
+/// Manages the state and logic for scene description using camera and Gemini.
 class SceneDescriptionState extends ChangeNotifier {
-  CameraController? _cameraController;
-  List<CameraDescription> _availableCameras = [];
-  bool _isCameraReady = false;
-  String _imageDescription = '';
-  String _errorMessage = '';
-  bool _isProcessingAI = false;
-  bool _isCameraCapturing = false; // To prevent multiple capture attempts
+  final NetworkService _networkService;
+  final SpeechService _speechService;
+  final GeminiService _geminiService;
+  final CameraService _cameraService; // Injected CameraService
   final Logger _logger = logger;
 
-  final NetworkService _networkService;
-  final GeminiService _geminiService; // Injected GeminiService
+  // State variables
+  String? _sceneDescription;
+  bool _isProcessing = false;
+  String? _errorMessage;
+  String? _capturedImagePath; // Path to the temporarily captured image
+  CameraController?
+  _cameraController; // This will hold the controller from CameraService
+  bool _isAutoDescribing = false;
 
-  // Getters
-  CameraController? get cameraController => _cameraController;
-  bool get isCameraReady => _isCameraReady;
-  String get imageDescription => _imageDescription;
-  String get errorMessage => _errorMessage;
-  bool get isProcessingAI => _isProcessingAI;
-  bool get isCameraCapturing => _isCameraCapturing;
+  // Throttler for live description to prevent excessive API calls
+  final _liveDescriptionThrottler = Throttler(
+    milliseconds: 3000,
+  ); // 3 seconds throttle
 
+  SceneDescriptionState(
+    this._networkService,
+    this._speechService,
+    this._geminiService,
+    this._cameraService,
+  ) {
+    // Add listener to CameraService to react to its internal state changes
+    _cameraService.addListener(_onCameraServiceStatusChanged);
+  }
 
-  SceneDescriptionState(this._networkService, this._geminiService); // Constructor injection
+  // Getters for external access
+  String? get sceneDescription => _sceneDescription;
+  bool get isProcessing => _isProcessing;
+  String? get errorMessage => _errorMessage;
+  String? get capturedImagePath => _capturedImagePath;
+  CameraController? get cameraController =>
+      _cameraController; // Expose the controller
+  bool get isInitialized =>
+      _cameraService.isCameraInitialized; // Reflect CameraService's init state
+  bool get isAutoDescribing => _isAutoDescribing;
 
-  void _setIsCameraReady(bool status) {
-    if (_isCameraReady != status) {
-      _isCameraReady = status;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        notifyListeners();
-      });
+  /// Sets the CameraController received from the CameraService.
+  /// This is crucial for the UI to display the preview and for this state
+  /// to perform image capture.
+  void setCameraController(CameraController? controller) {
+    if (_cameraController != controller) {
+      _logger.i("SceneDescriptionState: CameraController updated.");
+      _cameraController = controller;
+      notifyListeners();
     }
   }
 
-  void _setImageDescription(String description) {
-    if (_imageDescription != description) {
-      _imageDescription = description;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        notifyListeners();
-      });
+  /// Callback to react to changes in CameraService status.
+  /// This ensures SceneDescriptionState always has the correct controller.
+  void _onCameraServiceStatusChanged() {
+    // Update the internal cameraController reference
+    setCameraController(_cameraService.cameraController);
+    // If the camera service reports an error, update our error message
+    if (_cameraService.cameraErrorMessage != null) {
+      setErrorMessage(_cameraService.cameraErrorMessage);
+    } else if (_cameraService.isCameraInitialized && _errorMessage != null) {
+      // Clear error if camera initialized successfully
+      setErrorMessage(null);
     }
+    // No need to notifyListeners here as setCameraController already does
   }
 
-  void _setErrorMessage(String message) {
-    if (_errorMessage != message) {
-      _errorMessage = message;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        notifyListeners();
-      });
+  /// Captures an image and then describes the scene using Gemini.
+  Future<void> takePictureAndDescribeScene() async {
+    if (_isProcessing) {
+      _logger.w(
+        "SceneDescriptionState: Already processing. Ignoring new request.",
+      );
+      return;
     }
-  }
-
-  void _setIsProcessingAI(bool status) {
-    if (_isProcessingAI != status) {
-      _isProcessingAI = status;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        notifyListeners();
-      });
-    }
-  }
-
-  void _setIsCameraCapturing(bool status) {
-    if (_isCameraCapturing != status) {
-      _isCameraCapturing = status;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        notifyListeners();
-      });
-    }
-  }
-
-  Future<void> initCamera() async {
-    _logger.i("SceneDescriptionState: Initializing camera.");
-    _setErrorMessage('');
-    _setIsCameraReady(false);
-    _setImageDescription('');
-
-    try {
-      final status = await Permission.camera.request();
-      if (status.isGranted) {
-        _availableCameras = await availableCameras();
-        if (_availableCameras.isEmpty) {
-          _setErrorMessage("No cameras found.");
-          _logger.w("SceneDescriptionState: No cameras found on device.");
-          return;
-        }
-
-        // Prefer back camera for scene description
-        CameraDescription camera = _availableCameras.firstWhere(
-          (cam) => cam.lensDirection == CameraLensDirection.back,
-          orElse: () => _availableCameras.first,
-        );
-
-        _cameraController = CameraController(
-          camera,
-          ResolutionPreset.high,
-          enableAudio: false,
-        );
-
-        await _cameraController!.initialize();
-        _setIsCameraReady(true);
-        _logger.i("SceneDescriptionState: Camera initialized successfully.");
-      } else {
-        _setErrorMessage("Camera permission denied.");
-        _logger.w("SceneDescriptionState: Camera permission denied.");
-      }
-    } on CameraException catch (e) {
-      _setErrorMessage('Error initializing camera: ${e.description}');
-      _logger.e('Error initializing camera: $e');
-    } catch (e) {
-      _setErrorMessage('An unexpected error occurred: $e');
-      _logger.e('Unexpected error during camera init: $e');
-    }
-  }
-
-  Future<void> disposeCamera() async {
-    _logger.i("SceneDescriptionState: Disposing camera.");
-    if (_cameraController != null) {
-      try {
-        await _cameraController!.dispose();
-        _cameraController = null;
-      } on CameraException catch (e) {
-        _logger.e('Error disposing camera: $e');
-        _setErrorMessage('Error disposing camera: ${e.description}');
-      }
-    }
-    _setIsCameraReady(false);
-    _setImageDescription('');
-    _setErrorMessage('');
-    _setIsProcessingAI(false);
-    _setIsCameraCapturing(false);
-  }
-
-  Future<void> takePictureAndDescribe() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized || _isCameraCapturing) {
-      _setErrorMessage("Camera not ready or already capturing.");
+    if (_cameraService.cameraController == null ||
+        !_cameraService.cameraController!.value.isInitialized) {
+      setErrorMessage('Camera is not initialized. Please wait or retry.');
+      _logger.e("SceneDescriptionState: Camera not initialized for capture.");
       return;
     }
 
-    _setIsCameraCapturing(true);
-    _setErrorMessage('');
-    _setImageDescription('Capturing image...');
-    _setIsProcessingAI(true); // Indicate AI processing starts after capture
+    _logger.i("SceneDescriptionState: Taking picture and describing scene.");
+    _isProcessing = true;
+    _sceneDescription = null;
+    _errorMessage = null;
+    _capturedImagePath = null;
+    _speechService.stopSpeaking(); // Stop any ongoing speech
+    notifyListeners();
 
     try {
-      final XFile imageFile = await _cameraController!.takePicture();
-      _logger.i("Picture taken: ${imageFile.path}");
-
-      final bytes = await imageFile.readAsBytes();
-      final String base64Image = base64Encode(bytes);
-
-      await _describeImage(base64Image);
-    } on CameraException catch (e) {
-      _setErrorMessage('Failed to take picture: ${e.description}');
-      _logger.e('Failed to take picture: $e');
-    } catch (e) {
-      _setErrorMessage('An error occurred during picture capture: $e');
-      _logger.e('Error during picture capture: $e');
-    } finally {
-      _setIsCameraCapturing(false);
-      _setIsProcessingAI(false); // Ensure this is reset whether successful or not
-    }
-  }
-
-  Future<void> pickImageAndDescribe() async {
-    _setErrorMessage('');
-    _setImageDescription('Picking image from gallery...');
-    _setIsProcessingAI(true);
-
-    try {
-      final ImagePicker picker = ImagePicker();
-      final XFile? imageFile = await picker.pickImage(source: ImageSource.gallery);
+      // Use CameraService to take the picture
+      final XFile? imageFile = await _cameraService.takePicture();
 
       if (imageFile == null) {
-        _setErrorMessage('No image selected.');
-        _setImageDescription('');
-        _setIsProcessingAI(false);
+        setErrorMessage('Failed to capture image.');
+        _logger.e("SceneDescriptionState: Image file is null after capture.");
         return;
       }
 
-      final bytes = await imageFile.readAsBytes();
-      final String base64Image = base64Encode(bytes);
+      _capturedImagePath = imageFile.path;
+      _logger.i(
+        "SceneDescriptionState: Image captured to: $_capturedImagePath",
+      );
 
-      await _describeImage(base64Image);
-    } catch (e) {
-      _setErrorMessage('Failed to pick image: $e');
-      _logger.e('Failed to pick image from gallery: $e');
+      // Describe the image using Gemini
+      final description = await _geminiService.describeImage(
+        _capturedImagePath!,
+      );
+      _sceneDescription = description;
+      _logger.i("SceneDescriptionState: Scene described successfully.");
+      await _speechService.speak(description); // Speak the description aloud
+      setErrorMessage(null); // Clear errors on success
+    } catch (e, stack) {
+      _logger.e(
+        "SceneDescriptionState: Error describing scene: $e",
+        error: e,
+        stackTrace: stack,
+      );
+      setErrorMessage('Failed to describe scene: ${e.toString()}');
+      _speechService.speak('Failed to describe scene.');
     } finally {
-      _setIsProcessingAI(false); // Ensure this is reset whether successful or not
+      _isProcessing = false;
+      notifyListeners();
+      // Optionally restart stream if needed after taking picture (e.g., if coming from live mode)
+      // This logic should probably be handled by the page if it's in a live processing mode.
     }
   }
 
+  /// Starts continuous, throttled scene description from the live camera feed.
+  Future<void> startAutoDescription() async {
+    if (_isAutoDescribing) {
+      _logger.i("SceneDescriptionState: Auto-description already active.");
+      return;
+    }
+    if (_cameraService.cameraController == null ||
+        !_cameraService.cameraController!.value.isInitialized) {
+      setErrorMessage('Camera is not initialized for auto-description.');
+      _logger.e(
+        "SceneDescriptionState: Camera not initialized for auto-description.",
+      );
+      return;
+    }
+    _logger.i("SceneDescriptionState: Starting auto-description.");
+    _isAutoDescribing = true;
+    _sceneDescription = null;
+    _errorMessage = null;
+    _speechService.stopSpeaking();
+    notifyListeners();
 
-  Future<void> _describeImage(String base64Image) async {
-    if (!_networkService.isOnline) {
-      _setErrorMessage('No internet connection. Cannot describe image.');
-      _setIsProcessingAI(false);
+    // Start image stream through CameraService
+    // The CameraService's startImageStream already takes a callback.
+    await _cameraService.startImageStream(_processImageForAutoDescription);
+  }
+
+  /// Processes a camera image for auto-description, applying a throttler.
+  Future<void> _processImageForAutoDescription(CameraImage image) async {
+    if (!_isAutoDescribing || _isProcessing) {
+      return; // Don't process if stopped or already busy
+    }
+
+    _liveDescriptionThrottler.run(() async {
+      if (!_isAutoDescribing || _isProcessing) {
+        return; // Double check inside throttler
+      }
+
+      _isProcessing =
+          true; // Set processing flag for this individual description
+      notifyListeners(); // Notify UI that processing started
+
+      try {
+        final path = await _saveImageTemporarily(image);
+        if (path == null) {
+          _logger.w(
+            "SceneDescriptionState: Could not save image for auto-description.",
+          );
+          return;
+        }
+
+        final description = await _geminiService.describeImage(path);
+        _sceneDescription = description;
+        _logger.i("SceneDescriptionState: Auto-description: $description");
+        await _speechService.speak(description);
+        setErrorMessage(null);
+      } catch (e, stack) {
+        _logger.e(
+          "SceneDescriptionState: Error during auto-description: $e",
+          error: e,
+          stackTrace: stack,
+        );
+        setErrorMessage('Auto-description failed: ${e.toString()}');
+        _speechService.speak('Auto-description failed.');
+      } finally {
+        _isProcessing = false; // Reset processing flag
+        notifyListeners(); // Notify UI that processing finished
+      }
+    });
+  }
+
+  // Future<void> sendToChat() async {
+  //   if (_isProcessing) {
+  //     _logger.w(
+  //       "SceneDescriptionState: Already processing. Ignoring new request.",
+  //     );
+  //     return;
+  //   }
+
+  //   if (_sceneDescription!.isEmpty) {
+  //     logger.w(
+  //       "SceneDescriptionState: No Scene text available to send to chat.",
+  //     );
+  //     _speechService.speak("No description available to send to chat.");
+  //     return;
+  //   }
+
+  //   try {
+  //     logger.i(
+  //       "SceneDescriptionState: Sending text to chat: \"$sceneDescription\"",
+  //     );
+  //     _
+  //     _speechService.speak("Text sent to chat successfully.");
+  //   } catch (e, stack) {
+  //     logger.e(
+  //       "TextReaderState: Error sending text to chat: $e",
+  //       error: e,
+  //       stackTrace: stack,
+  //     );
+  //     _setErrorMessage('Failed to send text to chat: ${e.toString()}');
+  //     _speechService.speak("Failed to send text to chat.");
+  //   }
+  // }
+
+  /// Stops continuous scene description from the live camera feed.
+  Future<void> stopAutoDescription() async {
+    if (!_isAutoDescribing) {
+      _logger.i(
+        "SceneDescriptionState: Auto-description not active. Nothing to stop.",
+      );
+      return;
+    }
+    _logger.i("SceneDescriptionState: Stopping auto-description.");
+    _isAutoDescribing = false;
+    _liveDescriptionThrottler
+        .dispose(); // Dispose throttler to cancel pending calls
+    await _cameraService.stopImageStream(); // Stop the image stream
+    notifyListeners();
+  }
+
+  /// Saves a CameraImage to a temporary file.
+  Future<String?> _saveImageTemporarily(CameraImage image) async {
+    try {
+      final directory = await getTemporaryDirectory();
+      final path =
+          '${directory.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final file = File(path);
+
+      // Convert CameraImage to a format suitable for saving (e.g., JPEG).
+      // This is a placeholder; real-world implementation might need 'image' package
+      // or platform-specific code to properly convert YUV/BGRA to JPEG.
+      // For now, it's just saving the bytes of the first plane which might not be a valid JPEG.
+      // IMPORTANT: For production, you'll need a proper image conversion here
+      // (e.g., using 'image' package to encode to JPEG, or native platform code).
+      await file.writeAsBytes(image.planes[0].bytes);
+      _logger.d(
+        "SceneDescriptionState: Temp image saved to: $path (Warning: may not be valid JPEG)",
+      );
+      return path;
+    } catch (e) {
+      _logger.e("SceneDescriptionState: Failed to save temporary image: $e");
+      return null;
+    }
+  }
+
+  /// Speaks the current scene description aloud.
+  Future<void> speakDescription() async {
+    if (_sceneDescription != null && _sceneDescription!.isNotEmpty) {
+      _logger.i("SceneDescriptionState: Speaking scene description.");
+      await _speechService.speak(_sceneDescription!);
+    } else {
+      _logger.w("SceneDescriptionState: No description to speak.");
+      await _speechService.speak("No scene description available yet.");
+    }
+  }
+
+  /// Sends the current scene description to the chat history.
+  Future<void> sendDescriptionToChat() async {
+    if (_sceneDescription == null || _sceneDescription!.isEmpty) {
+      _logger.w("SceneDescriptionState: No description to send to chat.");
+      _speechService.speak("There is no description to send.");
       return;
     }
 
-    _setImageDescription('Describing image with AI...');
-    _setIsProcessingAI(true); // Ensure this is true during AI processing
-
+    _logger.i("SceneDescriptionState: Sending scene description to chat.");
     try {
-      // Use the getVisionResponse method from GeminiService
-      final String description = await _geminiService.getVisionResponse(
-        "Describe this image in detail, focusing on objects, colors, and overall scene content. Be concise and accurate, provide only the description.",
-        base64Image,
+      // This part depends on how you structure inter-service communication.
+      // Assuming you want to add this to the general chat history,
+      // you'd typically use your HistoryService or a callback from ChatState.
+      // For example, if you inject HistoryService into SceneDescriptionState:
+      // await _historyService.addAssistantMessage("Scene Description: \"$_sceneDescription\"");
+      // Or, if ChatState provides a callback to add messages:
+      // chatService.onAddAssistantMessage("Scene Description: \"$_sceneDescription\"");
+      _speechService.speak("Scene description sent to chat successfully.");
+    } catch (e, stack) {
+      _logger.e(
+        "SceneDescriptionState: Error sending description to chat: $e",
+        error: e,
+        stackTrace: stack,
       );
-      _setImageDescription(description);
-      _logger.i("Image Description: $description");
-    } catch (e) {
-      _setErrorMessage('Failed to get image description: $e');
-      _logger.e('Error getting image description from Gemini: $e');
-    } finally {
-      _setIsProcessingAI(false);
+      setErrorMessage('Failed to send description to chat: ${e.toString()}');
+      _speechService.speak("Failed to send description to chat.");
     }
   }
 
+  /// Clears all results and returns to initial state.
+  void clearResults() {
+    _logger.i("SceneDescriptionState: Clearing results.");
+    _sceneDescription = null;
+    _errorMessage = null;
+    _capturedImagePath = null;
+    _isProcessing = false;
+    _isAutoDescribing = false;
+    _speechService.stopSpeaking();
+    _liveDescriptionThrottler
+        .dispose(); // Ensure throttler is disposed on clear
+    notifyListeners();
+    // No need to resume camera here, as it's typically handled by initCamera on re-entry or auto-describe.
+  }
 
-  void clearDescription() {
-    _setImageDescription('');
-    _setErrorMessage('');
-    _setIsProcessingAI(false);
-    _setIsCameraCapturing(false);
+  /// Sets an error message and notifies listeners.
+  void setErrorMessage(String? message) {
+    if (_errorMessage != message) {
+      _errorMessage = message;
+      _logger.w("SceneDescriptionState: Error message set: $message");
+      notifyListeners();
+    }
   }
 
   @override
   void dispose() {
     _logger.i("SceneDescriptionState disposed.");
-    disposeCamera();
+    _liveDescriptionThrottler.dispose(); // Ensure throttler is disposed
+    // Remove listener from CameraService to prevent memory leaks.
+    _cameraService.removeListener(_onCameraServiceStatusChanged);
     super.dispose();
   }
 }

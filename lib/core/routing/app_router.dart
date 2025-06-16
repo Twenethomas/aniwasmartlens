@@ -7,11 +7,12 @@ import 'package:assist_lens/features/history/history_page.dart';
 import 'package:assist_lens/features/home/home_page.dart';
 import 'package:assist_lens/features/navigation/active_navigation_screen.dart';
 import 'package:assist_lens/features/navigation/map_screen.dart';
+import 'package:assist_lens/features/object_detection/object_detection_page.dart';
 import 'package:assist_lens/features/onboarding/onboarding_page.dart';
-import 'package:assist_lens/features/pc_cam/screens/object_detection_screen.dart';
 import 'package:assist_lens/features/scene_description/scene_description_page.dart';
 import 'package:assist_lens/features/text_reader/text_reader_page.dart';
-import 'package:assist_lens/main.dart'; // For MainAppWrapper
+// For MainAppWrapper
+import 'package:assist_lens/features/profile/profile_page.dart';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
@@ -32,38 +33,23 @@ class AppRouter {
   static const String aniwaChat = '/aniwaChat';
   static const String activeNavigation = '/activeNavigation';
   static const String exploreFeatures = '/exploreFeatures';
-  static const String open =
-      '/open'; // This is the route for opening the app directly to the main app wrapper
+  static const String profile =
+      '/profile'; // This is the route for opening the app directly to the main app 
+  static const String homeRoute = '/home'; // For profile page
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
       case onboarding:
         return MaterialPageRoute(builder: (_) => const OnboardingPage());
       case mainAppWrapper:
-        return MaterialPageRoute(builder: (_) => const MainAppWrapper());
+        return MaterialPageRoute(builder: (_) => const HomePage());
       case home:
         return MaterialPageRoute(builder: (_) => const HomePage());
       case textReader:
-        final args = settings.arguments as Map<String, dynamic>? ?? {};
-        return MaterialPageRoute(
-          builder:
-              (_) => TextReaderPage(
-                forChatIntegration:
-                    args['forChatIntegration'] as bool? ?? false,
-                autoCapture: args['autoCapture'] as bool? ?? false,
-                autoTranslate: args['autoTranslate'] as bool? ?? false,
-              ),
-        );
+        return MaterialPageRoute(builder: (_) => TextReaderPage());
       case aniwaChat:
-        final args = settings.arguments as Map<String, dynamic>? ?? {};
-        return MaterialPageRoute(
-          builder:
-              (_) => AniwaChatPage(
-                initialQuery: args['initialQuery'] as String?,
-                isForTabInitialization:
-                    args['isForTabInitialization'] as bool? ?? false,
-              ),
-        );
+        // No longer takes initialQuery or isForTabInitialization
+        return MaterialPageRoute(builder: (_) => const AniwaChatPage());
       case sceneDescription:
         final args = settings.arguments as Map<String, dynamic>? ?? {};
         return MaterialPageRoute(
@@ -82,7 +68,7 @@ class AppRouter {
         final args = settings.arguments as Map<String, dynamic>? ?? {};
         return MaterialPageRoute(
           builder:
-              (_) => ObjectDetectionScreen(
+              (_) => ObjectDetectionPage(
                 autoStartLive: args['autoStartLive'] as bool? ?? false,
               ),
         );
@@ -105,9 +91,9 @@ class AppRouter {
         );
       case exploreFeatures:
         return MaterialPageRoute(builder: (_) => const ExploreFeaturesPage());
-      case open:
-        // This route is used to open the app directly to the main app wrapper
-        return MaterialPageRoute(builder: (_) => const MainAppWrapper());
+        
+      case profile:
+        return MaterialPageRoute(builder: (_) => const ProfilePage());
       default:
         return MaterialPageRoute(
           builder:

@@ -74,6 +74,12 @@ dependencies:
   intl: ^0.20.2
   porcupine_flutter: ^3.0.4
   flutter_staggered_grid_view: ^0.7.0
+  lottie: ^3.3.1
+  google_maps_flutter: ^2.12.2
+  flutter_svg: ^2.1.0
+  animated_text_kit: ^4.2.3
+  gal: ^2.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -90,3 +96,4 @@ flutter:
     - assets/ml/mobile_face_net.tflite
     - assets/ml/coco_label.txt
     - assets/ml/ssd_mobilenet.tflite
+    - assets/animations/

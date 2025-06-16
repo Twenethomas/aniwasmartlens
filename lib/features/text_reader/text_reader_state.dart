@@ -1,436 +1,905 @@
 // lib/features/text_reader/text_reader_state.dart
 import 'dart:async';
 import 'dart:io';
-// import 'dart:math'; // Removed unused import if not explicitly used
-
+// Added for WriteBuffer
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' as ui;
 import 'package:flutter/material.dart'; // Import for WidgetsBinding.instance.addPostFrameCallback
-import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/services.dart'; // Added for Platform
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart'; // Ensure this import is present and correct
-import 'package:logger/logger.dart'; // Import logger
-import 'package:permission_handler/permission_handler.dart'; // Import permission_handler
+// Import logger
+// Import permission_handler
+import 'package:vibration/vibration.dart'; // Added for haptic feedback
+// For saving images
+import 'package:gal/gal.dart'; // Updated to use gal instead of image_gallery_saver
 
 import '../../core/services/network_service.dart';
 import '../../core/services/speech_service.dart';
 import '../../core/services/gemini_service.dart';
+import '../../core/services/history_services.dart'; // Re-added HistoryService
+import '../../core/services/text_reader_service.dart'; // Re-added TextReaderService
+import '../../core/services/camera_service.dart'; // NEW: Import CameraService
+// NEW: Import Throttler
 import '../../main.dart'; // For global logger
 
+enum TextReaderMode {
+  liveScan, // Continuously scan for text in live camera feed
+  capturedText, // Display a captured image and allow processing
+}
+
 class TextReaderState extends ChangeNotifier {
-  CameraController? _cameraController;
-  List<CameraDescription> _availableCameras = [];
-  bool _isCameraReady = false;
+  // Removed CameraController from here, now managed by CameraService
+  // Removed: List<CameraDescription> _availableCameras = []; // No longer used
+  // Removed: int _currentCameraIndex = 0; // No longer used
+  bool _isCameraReady = false; // Now derived from CameraService
   String _recognizedText = '';
   String _correctedText = '';
   String _translatedText = '';
   String _detectedLanguage = '';
-  bool _isProcessingImage = false;
-  bool _isProcessingAI = false;
+  String? _errorMessage;
+  bool _isProcessingImage = false; // For ML Kit OCR
+  bool _isProcessingAI = false; // For Gemini (correction, translation)
   bool _isSpeaking = false;
-  String _errorMessage = '';
-  bool _isFlashOn = false; // Added flash state
-  final Logger _logger = logger; // Logger instance
+  bool _isTranslating = false; // New flag for translation state
+  bool _textInView =
+      false; // Indicates if text is currently detected in the live feed
+  String? _capturedImagePath; // Path to the temporarily captured image file
+  // Removed: bool _hasAutoCapturedThisSession = false; // No longer used
 
+  Timer? _liveDetectionDebounceTimer; // Timer to debounce live text detection
+  static const int _liveDetectionDebounceDurationMs = 500; // Debounce for 500ms
+
+  Timer? _textInViewFeedbackTimer; // Timer for text in view feedback
+  bool _spokenTextInViewFeedbackGiven = false;
+
+  final TextRecognizer _textRecognizer = TextRecognizer(
+    script: TextRecognitionScript.latin,
+  ); // FIXED: Changed TextScript to TextRecognitionScript
+  final NetworkService _networkService;
   final SpeechService _speechService;
   final GeminiService _geminiService;
-  final NetworkService _networkService; // NetworkService dependency
+  final HistoryService _historyService;
+  final TextReaderServices _textReaderService;
+  final CameraService _cameraService; // NEW: Injected CameraService
 
-  // Changed TextScript.latin to TextRecognitionScript.latin and made field final
-  final TextRecognizer _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
-  Timer? _debounceTimer; // For debouncing text recognition
+  bool _isServiceDisposed =
+      false; // Flag to prevent operations on disposed service
 
-  // Getters
-  CameraController? get cameraController => _cameraController;
-  bool get isCameraReady => _isCameraReady;
+  // NEW: Current mode of the text reader UI
+  TextReaderMode _currentMode = TextReaderMode.liveScan;
+
+  // NEW: Flash state (derived from CameraService)
+  bool get isFlashOn => _cameraService.isFlashOn;
+
+  // NEW: Auto-capture state
+  bool _isAutoCaptureEnabled = false;
+  bool get isAutoCaptureEnabled => _isAutoCaptureEnabled;
+
+  // Language mapping for TTS
+  // This map should be comprehensive for all supported languages.
+  final Map<String, String> _languageNameToCode = {
+    'English': 'en-US', // Default or specific regional English
+    'Spanish': 'es-ES', // Example: Castilian Spanish
+    'French': 'fr-FR',
+    'German': 'de-DE',
+    'Chinese': 'zh-CN', // Mandarin Chinese (Simplified, China)
+    'Japanese': 'ja-JP',
+    'Korean': 'ko-KR',
+    'Arabic': 'ar-SA', // Arabic (Saudi Arabia)
+    'Russian': 'ru-RU',
+    'Italian': 'it-IT',
+    'Portuguese': 'pt-PT', // Portuguese (Portugal)
+    'Hindi': 'hi-IN',
+    'Bengali': 'bn-IN',
+    'Urdu': 'ur-PK',
+    'Turkish': 'tr-TR',
+    'Vietnamese': 'vi-VN',
+    'Thai': 'th-TH',
+    'Indonesian': 'id-ID',
+    'Malay': 'ms-MY',
+    'Swahili': 'sw-TZ', // Swahili (Tanzania)
+    'Zulu': 'zu-ZA',
+    'Hausa': 'ha-NG',
+  };
+
+  // Getters for UI consumption
+  // isCameraReady now reflects CameraService's state
+  bool get isCameraReady => _cameraService.isCameraInitialized;
   String get recognizedText => _recognizedText;
   String get correctedText => _correctedText;
   String get translatedText => _translatedText;
   String get detectedLanguage => _detectedLanguage;
+  String? get errorMessage => _errorMessage;
   bool get isProcessingImage => _isProcessingImage;
   bool get isProcessingAI => _isProcessingAI;
   bool get isSpeaking => _isSpeaking;
-  String get errorMessage => _errorMessage;
-  bool get isFlashOn => _isFlashOn;
+  bool get isTranslating => _isTranslating; // Expose translation state
+  bool get textInView => _textInView;
+  String? get capturedImagePath => _capturedImagePath;
+  TextReaderMode get currentMode => _currentMode; // Expose current mode
+
+  // Derived state to simplify UI logic
+  bool get isAnyProcessingActive =>
+      isProcessingImage || isProcessingAI || _isTranslating;
+
+  /// Checks if there's any text available to work with
+  bool get hasText =>
+      recognizedText.isNotEmpty ||
+      correctedText.isNotEmpty ||
+      translatedText.isNotEmpty;
+
+  /// Checks if the camera is in live mode (no captured image being displayed)
+  // isInLiveMode now also checks if CameraService is streaming
+  bool get isInLiveMode =>
+      _capturedImagePath == null && _cameraService.isStreamingImages;
 
   TextReaderState({
+    required NetworkService networkService,
     required SpeechService speechService,
     required GeminiService geminiService,
-    required NetworkService networkService,
-  })  : _speechService = speechService,
-        _geminiService = geminiService,
-        _networkService = networkService {
-    _speechService.speakingStatusStream.listen((status) {
-      if (_isSpeaking != status) {
-        _isSpeaking = status;
-        notifyListeners();
-      }
-    });
+    required HistoryService historyService,
+    required TextReaderServices textReaderService,
+    required CameraService cameraService, // NEW: CameraService injected
+  }) : _networkService = networkService,
+       _speechService = speechService,
+       _geminiService = geminiService,
+       _historyService = historyService,
+       _textReaderService = textReaderService,
+       _cameraService = cameraService {
+    // Assign injected CameraService
+    _speechService.addListener(_onSpeechStatusChanged);
+    _cameraService.addListener(
+      _onCameraServiceStatusChanged,
+    ); // Listen to CameraService changes
+    logger.i("TextReaderState initialized.");
   }
 
-  // --- State Management Helpers ---
-  void _setErrorMessage(String message) {
-    if (_errorMessage != message) {
-      _errorMessage = message;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
+  void _onSpeechStatusChanged() {
+    // This callback is triggered when speech service changes its speaking status
+    final newSpeakingStatus = _speechService.isSpeaking;
+    if (_isSpeaking != newSpeakingStatus) {
+      _isSpeaking = newSpeakingStatus;
+      notifyListeners();
     }
   }
 
-  void _setIsProcessingAI(bool status) {
-    if (_isProcessingAI != status) {
-      _isProcessingAI = status;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
+  // NEW: Listener for CameraService status changes
+  void _onCameraServiceStatusChanged() {
+    // Update internal _isCameraReady based on CameraService's state
+    if (_isCameraReady != _cameraService.isCameraInitialized) {
+      _isCameraReady = _cameraService.isCameraInitialized;
+      notifyListeners();
     }
+    // Also update errorMessage if CameraService has one
+    if (_errorMessage != _cameraService.cameraErrorMessage) {
+      _errorMessage = _cameraService.cameraErrorMessage;
+      notifyListeners();
+    }
+    // Update streaming status
+    // Removed: if (isInLiveMode != _cameraService.isStreamingImages) { notifyListeners(); }
+    // The `isInLiveMode` getter already depends on `_cameraService.isStreamingImages`
+    // and `_capturedImagePath`, so direct notification here isn't always strictly needed
+    // if _capturedImagePath isn't changing. However, for a complete UI update, keeping
+    // notifyListeners() might be beneficial if any widget directly observes `isInLiveMode`.
+    // For now, removing it to clear the specific `undefined_identifier` error related to `_isStreamingImages` local variable.
   }
 
-  void _setIsProcessingImage(bool status) {
-    if (_isProcessingImage != status) {
-      _isProcessingImage = status;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
-    }
-  }
-
-  void _setRecognizedText(String text) {
-    if (_recognizedText != text) {
-      _recognizedText = text;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
-    }
-  }
-
-  void _setCorrectedText(String text) {
-    if (_correctedText != text) {
-      _correctedText = text;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
-    }
-  }
-
-  void _setTranslatedText(String text) {
-    if (_translatedText != text) {
-      _translatedText = text;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
-    }
-  }
-
-  void _setDetectedLanguage(String language) {
-    if (_detectedLanguage != language) {
-      _detectedLanguage = language;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
-    }
-  }
-
-  void _setIsCameraReady(bool status) {
-    if (_isCameraReady != status) {
-      _isCameraReady = status;
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
-    }
-  }
-
-  // --- Camera Control ---
+  /// Initializes the camera for live text detection.
+  // Now delegates to CameraService
   Future<void> initCamera() async {
-    _logger.i("TextReaderState: Initializing camera.");
-    _setErrorMessage('');
-    _setIsCameraReady(false);
-    _setIsProcessingImage(false);
-
-    try {
-      final status = await Permission.camera.request();
-      if (status.isGranted) {
-        _availableCameras = await availableCameras();
-        if (_availableCameras.isEmpty) {
-          _setErrorMessage("No cameras found.");
-          _logger.w("TextReaderState: No cameras found on device.");
-          return;
-        }
-
-        // Prefer back camera if available, otherwise use the first one
-        CameraDescription camera = _availableCameras.firstWhere(
-          (cam) => cam.lensDirection == CameraLensDirection.back,
-          orElse: () => _availableCameras.first,
-        );
-
-        _cameraController = CameraController(
-          camera,
-          ResolutionPreset.high, // Use high resolution for better OCR
-          enableAudio: false,
-          imageFormatGroup: Platform.isAndroid ? ImageFormatGroup.nv21 : ImageFormatGroup.bgra8888,
-        );
-
-        await _cameraController!.initialize();
-        _setIsCameraReady(true);
-        _logger.i("TextReaderState: Camera initialized successfully.");
-
-        // Start image stream for continuous processing
-        _cameraController!.startImageStream(_processCameraImage);
-      } else {
-        _setErrorMessage("Camera permission denied.");
-        _logger.w("TextReaderState: Camera permission denied.");
-      }
-    } on CameraException catch (e) {
-      _setErrorMessage('Error initializing camera: ${e.description} (Code: ${e.code})'); // Include code for better debugging
-      _logger.e('Error initializing camera: $e');
-    } catch (e) {
-      _setErrorMessage('An unexpected error occurred: $e');
-      _logger.e('Unexpected error during camera init: $e');
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: initCamera called on disposed service. Aborting.",
+      );
+      return;
     }
+
+    logger.i(
+      "TextReaderState: Requesting camera initialization from CameraService...",
+    );
+    await _cameraService.initializeCamera(); // Delegate initialization
+    _isCameraReady = _cameraService.isCameraInitialized;
+    _setErrorMessage(
+      _cameraService.cameraErrorMessage,
+    ); // Get error from CameraService
+
+    if (_isCameraReady) {
+      _setMode(TextReaderMode.liveScan); // Always start in live scan mode
+      await resumeCamera(); // Start the image stream immediately
+      logger.i(
+        "TextReaderState: Camera initialized and live stream started (via CameraService).",
+      );
+    } else {
+      logger.e(
+        "TextReaderState: Camera not ready after CameraService initialization.",
+      );
+    }
+    notifyListeners();
   }
 
-  Future<void> pauseCamera() async {
-    _logger.i("TextReaderState: Pausing camera.");
-    try {
-      if (_cameraController != null && _cameraController!.value.isStreamingImages) {
-        await _cameraController!.stopImageStream();
-      }
-    } on CameraException catch (e) {
-      _logger.e('Error pausing camera: $e');
-      _setErrorMessage('Error pausing camera: ${e.description}');
-    }
-    _setIsProcessingImage(false); // Ensure processing is off when paused
-  }
-
+  /// Starts or resumes the camera image stream for live text detection.
+  // Now delegates to CameraService
   Future<void> resumeCamera() async {
-    _logger.i("TextReaderState: Resuming camera.");
-    _setErrorMessage('');
-    try {
-      if (_cameraController != null && !_cameraController!.value.isStreamingImages) {
-        await _cameraController!.startImageStream(_processCameraImage);
-      } else if (_cameraController == null) {
-        // If camera was disposed, re-initialize it
-        await initCamera();
-      }
-    } on CameraException catch (e) {
-      _logger.e('Error resuming camera: $e');
-      _setErrorMessage('Error resuming camera: ${e.description}');
-    }
-  }
-
-  Future<void> disposeCamera() async {
-    _logger.i("TextReaderState: Disposing camera.");
-    if (_cameraController != null) {
-      try {
-        if (_cameraController!.value.isStreamingImages) {
-          await _cameraController!.stopImageStream();
-        }
-        await _cameraController!.dispose();
-        _cameraController = null;
-      } on CameraException catch (e) {
-        _logger.e('Error disposing camera: $e');
-        _setErrorMessage('Error disposing camera: ${e.description}');
-      }
-    }
-    _setIsCameraReady(false);
-    _setIsProcessingImage(false);
-    _setRecognizedText('');
-    _setCorrectedText('');
-    _setTranslatedText('');
-    _setDetectedLanguage('');
-    _setErrorMessage('');
-  }
-
-  void toggleFlash() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      _setErrorMessage("Camera not ready for flash control.");
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: resumeCamera called on disposed service. Aborting.",
+      );
       return;
     }
-    try {
-      if (_isFlashOn) {
-        await _cameraController!.setFlashMode(FlashMode.off);
-        _isFlashOn = false;
-      } else {
-        await _cameraController!.setFlashMode(FlashMode.torch);
-        _isFlashOn = true;
-      }
-      WidgetsBinding.instance.addPostFrameCallback((_) { // Defer notification
-        notifyListeners();
-      });
-    } on CameraException catch (e) {
-      _setErrorMessage("Failed to toggle flash: ${e.description}");
-      _logger.e("Failed to toggle flash: $e");
+    if (!_cameraService.isCameraInitialized) {
+      logger.w(
+        "TextReaderState: Camera not initialized. Cannot resume stream.",
+      );
+      _setErrorMessage(
+        "Camera not initialized. Please ensure permissions are granted.",
+      );
+      notifyListeners();
+      return;
     }
-  }
-
-  // --- Text Recognition Logic ---
-  Future<void> _processCameraImage(CameraImage cameraImage) async {
-    if (_isProcessingImage || !_isCameraReady) return;
-
-    _setIsProcessingImage(true);
-    _setErrorMessage('');
-
-    final inputImage = _inputImageFromCameraImage(cameraImage);
-
-    if (inputImage == null) {
-      _setIsProcessingImage(false);
+    if (_cameraService.isStreamingImages &&
+        _currentMode == TextReaderMode.liveScan) {
+      // FIXED: Use _cameraService.isStreamingImages
+      logger.i(
+        "TextReaderState: Camera stream already active in live mode. No need to resume.",
+      );
       return;
     }
 
-    // Debounce to prevent processing too many frames
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 200), () async {
-      try {
-        final RecognizedText recognizedTextMl = await _textRecognizer.processImage(inputImage);
-        _setRecognizedText(recognizedTextMl.text);
-        _logger.d("Recognized Text: ${recognizedTextMl.text}");
+    logger.i(
+      "TextReaderState: Requesting camera stream resume from CameraService for live detection.",
+    );
+    _setErrorMessage(null); // Clear any previous errors
 
-        if (recognizedTextMl.text.isNotEmpty) {
-          await _processRecognizedText(recognizedTextMl.text);
-        }
-      } catch (e) {
-        _logger.e("Error processing image for text recognition: $e");
-        _setErrorMessage("Error recognizing text.");
-      } finally {
-        _setIsProcessingImage(false);
-      }
+    await _cameraService.startImageStream((CameraImage image) {
+      _liveDetectionDebounceTimer?.cancel(); // Cancel any existing timer
+      _liveDetectionDebounceTimer = Timer(
+        const Duration(milliseconds: _liveDetectionDebounceDurationMs),
+        () {
+          if (_currentMode == TextReaderMode.liveScan &&
+              !isAnyProcessingActive) {
+            _processCameraImage(image);
+          } else {
+            logger.d(
+              "TextReaderState: Skipping live frame processing due to non-live mode or active processing.",
+            );
+          }
+        },
+      );
     });
+    // Update internal streaming status based on CameraService (though isInLiveMode getter handles this)
+    // Removed: _isStreamingImages = _cameraService.isStreamingImages; // No longer needed
+    _setErrorMessage(_cameraService.cameraErrorMessage);
+    notifyListeners();
   }
 
-  InputImage? _inputImageFromCameraImage(CameraImage image) {
-    final camera = _cameraController!.description;
-    final sensorOrientation = camera.sensorOrientation;
-
-    InputImageRotation? rotation;
-    // Assuming the orientation is relative to the device's natural orientation.
-    // Need to adjust based on platform and camera sensor orientation.
-    // This is a common point of error for ML Kit with camera.
-    if (Platform.isIOS) {
-      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
-    } else if (Platform.isAndroid) {
-      int rotationCompensation = _cameraController!.description.sensorOrientation;
-      // For front camera, compensate for the mirrored image
-      if (camera.lensDirection == CameraLensDirection.front) {
-        rotationCompensation = (360 - rotationCompensation) % 360;
-      }
-      rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
+  /// Pauses the camera image stream.
+  // Now delegates to CameraService
+  Future<void> pauseCamera() async {
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: pauseCamera called on disposed service. Aborting.",
+      );
+      return;
     }
-    if (rotation == null) {
-      _logger.e("Failed to get image rotation.");
+    logger.i(
+      "TextReaderState: Requesting camera stream pause from CameraService.",
+    );
+    _liveDetectionDebounceTimer?.cancel(); // Cancel any pending live detection
+    await _cameraService.stopImageStream(); // Delegate pausing
+    // Removed: _isStreamingImages = _cameraService.isStreamingImages; // No longer needed
+    _setErrorMessage(_cameraService.cameraErrorMessage);
+    notifyListeners();
+  }
+
+  /// Disposes the camera controller and stops any active streams.
+  // Now delegates to CameraService
+  Future<void> disposeCamera() async {
+    logger.i("TextReaderState: Requesting camera disposal from CameraService.");
+    _liveDetectionDebounceTimer?.cancel();
+    _textInViewFeedbackTimer?.cancel();
+    await _cameraService.disposeCamera(); // Delegate disposal
+    _isCameraReady = _cameraService.isCameraInitialized;
+    // Removed: _isStreamingImages = _cameraService.isStreamingImages; // No longer needed
+    _setErrorMessage(_cameraService.cameraErrorMessage);
+    notifyListeners();
+  }
+
+  /// Processes a single camera image for live text detection.
+  /// This method is optimized to only detect text and update the `_textInView` status.
+  Future<void> _processCameraImage(CameraImage image) async {
+    if (_isServiceDisposed ||
+        _currentMode != TextReaderMode.liveScan ||
+        isAnyProcessingActive) {
+      logger.d(
+        "TextReaderState: Skipping _processCameraImage due to service disposed, non-live mode, or active processing.",
+      );
+      return;
+    }
+
+    if (!_networkService.isOnline) {
+      _updateTextInViewStatus(false); // No text in view if offline
+      _setErrorMessage("Offline. Live text detection paused.");
+      return;
+    }
+
+    InputImage? inputImage;
+    try {
+      // Use CameraService's current camera controller to get details for InputImage
+      final cameraController = _cameraService.cameraController;
+      if (cameraController == null || !cameraController.value.isInitialized) {
+        logger.e(
+          "TextReaderState: CameraController from CameraService is not ready.",
+        );
+        _updateTextInViewStatus(false);
+        return;
+      }
+      inputImage = _inputImageFromCameraImage(
+        image,
+        cameraController.description.lensDirection,
+        cameraController.description.sensorOrientation,
+      );
+      if (inputImage == null) {
+        logger.e(
+          "TextReaderState: Failed to create InputImage from CameraImage.",
+        );
+        _updateTextInViewStatus(false);
+        return;
+      }
+
+      final RecognizedText recognizedTextMlKit = await _textRecognizer
+          .processImage(inputImage);
+      final bool textFound = recognizedTextMlKit.text.isNotEmpty;
+      _updateTextInViewStatus(textFound);
+
+      // Provide haptic/audio feedback when text is in view for the first time
+      if (textFound && !_spokenTextInViewFeedbackGiven) {
+        Vibration.vibrate(duration: 50); // Short vibrate
+        _speechService.speak("Text in view.");
+        _spokenTextInViewFeedbackGiven = true;
+        _textInViewFeedbackTimer?.cancel(); // Cancel previous timer
+        _textInViewFeedbackTimer = Timer(const Duration(seconds: 5), () {
+          _spokenTextInViewFeedbackGiven = false; // Reset after some time
+        });
+      }
+    } catch (e) {
+      logger.e("TextReaderState: Error during live text detection: $e");
+      _setErrorMessage("Live scan error: ${e.toString()}");
+      _updateTextInViewStatus(false);
+    } finally {
+      // Ensure inputImage is closed if it was created from a file
+      if (inputImage?.filePath != null) {
+        try {
+          if (await File(inputImage!.filePath!).exists()) {
+            await File(inputImage.filePath!).delete();
+          }
+        } catch (e) {
+          logger.e(
+            "TextReaderState: Error deleting temporary input image file: $e",
+          );
+        }
+      }
+    }
+  }
+
+  // Helper method to create InputImage from CameraImage (updated to use CameraService's controller info)
+  InputImage? _inputImageFromCameraImage(
+    CameraImage image,
+    CameraLensDirection lensDirection,
+    int sensorOrientation,
+  ) {
+    if (!_cameraService.isCameraInitialized) {
       return null;
     }
 
-    final format = Platform.isAndroid ? InputImageFormat.nv21 : InputImageFormat.bgra8888;
-    final bytes = _concatenatePlanes(image.planes);
+    final InputImageRotation mlKitRotation;
+
+    if (Platform.isIOS) {
+      mlKitRotation = InputImageRotationValue.fromRawValue(sensorOrientation)!;
+    } else if (Platform.isAndroid) {
+      int rotationCompensation = sensorOrientation;
+      if (lensDirection == CameraLensDirection.front) {
+        rotationCompensation = (360 - rotationCompensation) % 360;
+      }
+      mlKitRotation =
+          InputImageRotationValue.fromRawValue(rotationCompensation)!;
+    } else {
+      mlKitRotation =
+          InputImageRotation.rotation0deg; // Default for other platforms
+    }
+
+    final bytes = _concatenatePlplanes(image.planes);
+    final format =
+        InputImageFormat
+            .nv21; // Use YUV420 for Android (NV21) and BGRA8888 for iOS (BGRA)
 
     return InputImage.fromBytes(
       bytes: bytes,
       metadata: InputImageMetadata(
         size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: rotation,
+        rotation: mlKitRotation,
         format: format,
         bytesPerRow: image.planes[0].bytesPerRow,
       ),
     );
   }
 
-  Uint8List _concatenatePlanes(List<Plane> planes) {
-    final WriteBuffer allBytes = WriteBuffer();
+  // Helper to concatenate image planes into a single Uint8List for ML Kit
+  Uint8List _concatenatePlplanes(List<Plane> planes) {
+    final allBytes = ui.WriteBuffer();
     for (Plane plane in planes) {
       allBytes.putUint8List(plane.bytes);
     }
     return allBytes.done().buffer.asUint8List();
   }
 
-  // --- AI Processing ---
-  Future<void> _processRecognizedText(String text) async {
-    if (text.isEmpty) {
-      _setCorrectedText('');
-      _setTranslatedText('');
-      _setDetectedLanguage('');
+  /// Captures an image, performs OCR, and then switches to CapturedTextMode.
+  // Now delegates to CameraService for taking picture
+  Future<void> takePictureAndProcessText() async {
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: takePictureAndProcessText called on disposed service. Aborting.",
+      );
+      return;
+    }
+    if (!_cameraService.isCameraInitialized) {
+      _setErrorMessage("Camera not ready.");
+      _speechService.speak("Camera is not ready. Please wait.");
+      return;
+    }
+    if (isAnyProcessingActive) {
+      _setErrorMessage("Please wait for current operation to finish.");
+      return;
+    }
+
+    _setIsProcessingImage(true);
+    _setErrorMessage(null);
+    _setRecognizedText('');
+    _setCorrectedText('');
+    _setTranslatedText('');
+    _setDetectedLanguage('');
+    _setCapturedImagePath(null); // Clear any old captured image
+    _speechService.stopSpeaking(); // Stop any ongoing speech
+
+    logger.i("TextReaderState: Capturing picture for text processing.");
+    _speechService.speak("Capturing text.");
+
+    try {
+      await pauseCamera(); // Pause live stream before taking picture
+      final XFile? file =
+          await _cameraService.takePicture(); // Delegate taking picture
+      if (file == null) {
+        throw Exception("Failed to capture image.");
+      }
+
+      _setCapturedImagePath(file.path);
+      _setMode(TextReaderMode.capturedText); // Switch to captured text mode
+      final InputImage inputImage = InputImage.fromFilePath(file.path);
+
+      if (!_networkService.isOnline) {
+        logger.i("TextReaderState: Processing captured image: ${file.path}");
+        final RecognizedText recognizedTextMlKit = await _textRecognizer
+            .processImage(inputImage);
+
+        if (recognizedTextMlKit.text.isEmpty) {
+          _setErrorMessage("No text detected in the captured image.");
+          _speechService.speak("No text detected in the image.");
+        } else {
+          _setRecognizedText(recognizedTextMlKit.text);
+          _setDetectedLanguage(
+            recognizedTextMlKit.blocks.isNotEmpty
+                ? recognizedTextMlKit.blocks.first.recognizedLanguages.first
+                : 'Unknown',
+          );
+          _speechService.speak(
+            "Text captured. Press speak, correct, or translate.",
+          );
+        }
+      } else {
+        logger.i("TextReaderState: AI Processing captured image: ${file.path}");
+        // Assuming extractTextFromImage returns String? (null if no text or error, or empty string)
+        final String? recognizedTextAiText = await _geminiService
+            .extractTextFromImage(file.path);
+
+        if (recognizedTextAiText != null && recognizedTextAiText.isNotEmpty) {
+          _setRecognizedText(recognizedTextAiText);
+          final String detectedLanguageByAi = await _geminiService
+              .detectLanguage(recognizedTextAiText); // Pass the non-null, non-empty string
+          _setDetectedLanguage(detectedLanguageByAi);
+          _speechService.speak(
+            "Text captured and processed by Aniwa. Press speak, correct, or translate.",
+          );
+        } else {
+          _setErrorMessage("No text detected in the image by AI, or an error occurred during extraction.");
+          _speechService.speak("No text was detected by the AI.");
+        }
+      }
+    } catch (e) {
+      logger.e("TextReaderState: Error taking picture or processing text: $e");
+      _setErrorMessage("Failed to capture or process text: ${e.toString()}");
+      _speechService.speak("Failed to capture or process text.");
+    } finally {
+      _setIsProcessingImage(false);
+      // Do NOT resume camera here. Resuming happens when clearing results.
+    }
+  }
+
+  /// Corrects the currently recognized text using Gemini.
+  Future<void> correctText() async {
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: correctText called on disposed service. Aborting.",
+      );
+      return;
+    }
+    if (recognizedText.isEmpty) {
+      _setErrorMessage("No text to correct.");
+      _speechService.speak("No text to correct.");
+      return;
+    }
+    if (isAnyProcessingActive) {
+      _setErrorMessage("Already busy. Please wait.");
+      return;
+    }
+    if (!_networkService.isOnline) {
+      _setErrorMessage("Cannot correct text while offline.");
+      _speechService.speak("Cannot correct text while offline.");
       return;
     }
 
     _setIsProcessingAI(true);
-    _setErrorMessage('');
-
-    if (!_networkService.isOnline) {
-      _setErrorMessage('No internet connection. Cannot perform AI operations.');
-      _setIsProcessingAI(false);
-      return;
-    }
+    _setErrorMessage(null);
+    _speechService.stopSpeaking();
+    logger.i("TextReaderState: Correcting text using Gemini.");
+    _speechService.speak("Correcting text.");
 
     try {
-      // 1. Correct OCR Errors (using Gemini for robustness)
-      final corrected = await _geminiService.correctOcrErrors(text); // Correct method call
+      final String corrected = await _geminiService.correctOcrErrors(
+        recognizedText,
+      );
       _setCorrectedText(corrected);
-      _logger.i("Corrected Text: $corrected");
-
-      // 2. Detect Language
-      final detectedLang = await _geminiService.detectLanguage(corrected); // Correct method call
-      _setDetectedLanguage(detectedLang);
-      _logger.i("Detected Language: $detectedLang");
-
-      // 3. Translate to English (or user's preferred language)
-      final translated = await _geminiService.translateText(corrected, 'English'); // Correct method call
-      _setTranslatedText(translated);
-      _logger.i("Translated Text (English): $translated");
-
-      // Speak the translated text
-      await _speechService.speak(translated);
+      _setTranslatedText(''); // Clear translation if correction is applied
+      _speechService.speak("Text corrected.");
     } catch (e) {
-      _logger.e("Error during AI text processing: $e");
-      _setErrorMessage("Failed to process text with AI. Please try again.");
+      logger.e("TextReaderState: Error correcting text: $e");
+      _setErrorMessage("Failed to correct text: ${e.toString()}");
+      _speechService.speak("Failed to correct text.");
     } finally {
       _setIsProcessingAI(false);
     }
   }
 
-  // --- Speech and Text Actions ---
-  Future<void> speakRecognizedText() async {
-    if (_recognizedText.isNotEmpty) {
-      await _speechService.speak(_recognizedText);
-    } else {
-      _setErrorMessage("No text to speak.");
+  /// Translates the currently recognized (or corrected) text using Gemini.
+  Future<void> translateText(String targetLanguage) async {
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: translateText called on disposed service. Aborting.",
+      );
+      return;
     }
-  }
-
-  Future<void> speakCorrectedText() async {
-    if (_correctedText.isNotEmpty) {
-      await _speechService.speak(_correctedText);
-    } else {
-      _setErrorMessage("No corrected text to speak.");
+    final textToTranslate =
+        correctedText.isNotEmpty ? correctedText : recognizedText;
+    if (textToTranslate.isEmpty) {
+      _setErrorMessage("No text to translate.");
+      _speechService.speak("No text to translate.");
+      return;
     }
-  }
-
-  Future<void> speakTranslatedText() async {
-    if (_translatedText.isNotEmpty) {
-      await _speechService.speak(_translatedText);
-    } else {
-      _setErrorMessage("No translated text to speak.");
+    if (isAnyProcessingActive) {
+      _setErrorMessage("Already busy. Please wait.");
+      return;
     }
-  }
+    if (!_networkService.isOnline) {
+      _setErrorMessage("Cannot translate text while offline.");
+      _speechService.speak("Cannot translate text while offline.");
+      return;
+    }
 
-  void stopSpeaking() {
+    _setIsProcessingAI(true);
+    _isTranslating = true; // Set translation specific flag
+    _setErrorMessage(null);
     _speechService.stopSpeaking();
+    logger.i(
+      "TextReaderState: Translating text to $targetLanguage using Gemini.",
+    );
+    _speechService.speak("Translating to $targetLanguage.");
+
+    try {
+      final String translated = await _geminiService.translateText(
+        textToTranslate,
+        targetLanguage,
+      );
+      _setTranslatedText(translated);
+
+      // NEW: Set TTS language to the translated language
+      final String? targetLanguageCode = _languageNameToCode[targetLanguage];
+      if (targetLanguageCode != null) {
+        logger.i(
+          "TextReaderState: Attempting to set TTS language to $targetLanguageCode.",
+        );
+        final bool languageSet = await _speechService.setLanguage(
+          targetLanguageCode,
+        );
+        if (!languageSet) {
+          logger.w(
+            "TextReaderState: Failed to set TTS language to $targetLanguageCode. Using default.",
+          );
+          _setErrorMessage(
+            "Failed to set speech language for $targetLanguage. Speaking in default language.",
+          );
+        } else {
+          logger.i("TextReaderState: TTS language set to $targetLanguageCode.");
+        }
+      } else {
+        logger.w(
+          "TextReaderState: Unknown target language '$targetLanguage'. Cannot set TTS language.",
+        );
+        _setErrorMessage(
+          "Unknown language for speech. Speaking in default language.",
+        );
+      }
+
+      _speechService.speak("Translation complete.");
+    } catch (e) {
+      logger.e("TextReaderState: Error translating text: $e");
+      _setErrorMessage("Failed to translate text: ${e.toString()}");
+      _speechService.speak("Failed to translate text.");
+    } finally {
+      _setIsProcessingAI(false);
+      _isTranslating = false;
+    }
   }
 
-  void clearResults() {
+  /// Speaks the currently displayed text (translated > corrected > recognized).
+  Future<void> speakCurrentText() async {
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: speakCurrentText called on disposed service. Aborting.",
+      );
+      return;
+    }
+    final textToSpeak =
+        translatedText.isNotEmpty
+            ? translatedText
+            : (correctedText.isNotEmpty ? correctedText : recognizedText);
+
+    if (textToSpeak.isEmpty) {
+      _setErrorMessage("No text to speak.");
+      _speechService.speak("There is no text to speak.");
+      return;
+    }
+
+    if (_speechService.isSpeaking) {
+      _speechService.stopSpeaking();
+      _speechService.speak("Speech stopped.");
+      return;
+    }
+
+    _setErrorMessage(null);
+    logger.i("TextReaderState: Speaking current text.");
+    await _speechService.speak(textToSpeak);
+  }
+
+  /// Clears all results and returns to live scan mode, resuming camera.
+  void clearResults({bool keepProcessingFlags = false}) {
+    if (_isServiceDisposed) {
+      logger.w(
+        "TextReaderState: clearResults called on disposed service. Aborting.",
+      );
+      return;
+    }
+    logger.i(
+      "TextReaderState: clearResults called. Resetting to live scan mode.",
+    );
     _setRecognizedText('');
     _setCorrectedText('');
     _setTranslatedText('');
     _setDetectedLanguage('');
     _setErrorMessage('');
+    _setCapturedImagePath(null); // Clear captured image path
     _speechService.stopSpeaking(); // Stop any ongoing speech
+    _liveDetectionDebounceTimer?.cancel(); // Cancel any pending live detection
+    _updateTextInViewStatus(false); // Reset text in view flag
+    _spokenTextInViewFeedbackGiven = false;
+    _textInViewFeedbackTimer?.cancel();
+    _textInViewFeedbackTimer = null;
+    // Removed: _hasAutoCapturedThisSession = false; // No longer used
+
+    if (!keepProcessingFlags) {
+      _setIsProcessingImage(false);
+      _setIsProcessingAI(false);
+      _isTranslating = false; // Reset translation flag
+    }
+    _setMode(TextReaderMode.liveScan); // Switch back to live scan mode
+    logger.i("TextReaderState: Results cleared. Resuming camera.");
+    resumeCamera(); // Resume camera after clearing results
+  }
+
+  // Private setters for state variables
+  void _setIsProcessingImage(bool value) {
+    if (_isProcessingImage != value) {
+      _isProcessingImage = value;
+      notifyListeners();
+    }
+  }
+
+  void _setIsProcessingAI(bool value) {
+    if (_isProcessingAI != value) {
+      _isProcessingAI = value;
+      notifyListeners();
+    }
+  }
+
+  void _setRecognizedText(String text) {
+    if (_recognizedText != text) {
+      _recognizedText = text;
+      notifyListeners();
+    }
+  }
+
+  void _setCorrectedText(String text) {
+    if (_correctedText != text) {
+      _correctedText = text;
+      notifyListeners();
+    }
+  }
+
+  void _setTranslatedText(String text) {
+    if (_translatedText != text) {
+      _translatedText = text;
+      notifyListeners();
+    }
+  }
+
+  void _setDetectedLanguage(String language) {
+    if (_detectedLanguage != language) {
+      _detectedLanguage = language;
+      notifyListeners();
+    }
+  }
+
+  void _setErrorMessage(String? message) {
+    if (_errorMessage != message) {
+      _errorMessage = message;
+      notifyListeners();
+    }
+  }
+
+  void _updateTextInViewStatus(bool status) {
+    if (_textInView != status) {
+      _textInView = status;
+      notifyListeners();
+    }
+  }
+
+  void _setCapturedImagePath(String? path) {
+    if (_capturedImagePath != path) {
+      _capturedImagePath = path;
+      notifyListeners();
+    }
+  }
+
+  void _setMode(TextReaderMode mode) {
+    if (_currentMode != mode) {
+      _currentMode = mode;
+      notifyListeners();
+    }
+  }
+
+  // NEW: Toggle Flash - now delegates to CameraService
+  void toggleFlash() async {
+    if (_isServiceDisposed) return;
+    await _cameraService.toggleFlash();
+    notifyListeners(); // Notify to reflect flash state change from CameraService
+  }
+
+  // NEW: Set Auto-Capture
+  void setAutoCapture(bool enable) {
+    if (_isAutoCaptureEnabled != enable && !_isServiceDisposed) {
+      _isAutoCaptureEnabled = enable;
+      // Removed: _hasAutoCapturedThisSession = false; // No longer used
+      notifyListeners();
+      logger.i("TextReaderState: Auto-capture set to: $enable");
+      if (!enable) {
+        _spokenTextInViewFeedbackGiven =
+            false; // Reset feedback when auto-capture is off
+      }
+    }
+  }
+
+  /// Saves the captured image to the device gallery
+  Future<void> saveImageToGallery() async {
+    if (_isServiceDisposed || _capturedImagePath == null) {
+      logger.w(
+        "TextReaderState: Cannot save image. No captured image available or service disposed.",
+      );
+      _speechService.speak("No image available to save.");
+      return;
+    }
+
+    try {
+      logger.i("TextReaderState: Saving image to gallery: $_capturedImagePath");
+      await Gal.putImage(_capturedImagePath!);
+      _speechService.speak("Image saved to gallery successfully.");
+      logger.i("TextReaderState: Image saved to gallery successfully.");
+    } catch (e, stack) {
+      logger.e(
+        "TextReaderState: Error saving image to gallery: $e",
+        error: e,
+        stackTrace: stack,
+      );
+      _setErrorMessage('Failed to save image: ${e.toString()}');
+      _speechService.speak("Failed to save image to gallery.");
+    }
+  }
+
+  /// Sends the processed text to chat/conversation
+  Future<void> sendToChat() async {
+    if (_isServiceDisposed) {
+      logger.w("TextReaderState: sendToChat called on disposed service.");
+      return;
+    }
+
+    String textToSend =
+        translatedText.isNotEmpty
+            ? translatedText
+            : (correctedText.isNotEmpty ? correctedText : recognizedText);
+
+    if (textToSend.isEmpty) {
+      logger.w("TextReaderState: No text available to send to chat.");
+      _speechService.speak("No text available to send to chat.");
+      return;
+    }
+
+    try {
+      logger.i("TextReaderState: Sending text to chat: \"$textToSend\"");
+      await _historyService.addUserMessage("Text from camera: \"$textToSend\"");
+      _speechService.speak("Text sent to chat successfully.");
+    } catch (e, stack) {
+      logger.e(
+        "TextReaderState: Error sending text to chat: $e",
+        error: e,
+        stackTrace: stack,
+      );
+      _setErrorMessage('Failed to send text to chat: ${e.toString()}');
+      _speechService.speak("Failed to send text to chat.");
+    }
+  }
+
+  /// Stops any ongoing speech
+  void stopSpeaking() {
+    if (_isServiceDisposed) return;
+    logger.i("TextReaderState: Stopping speech.");
+    _speechService.stopSpeaking();
   }
 
   @override
   void dispose() {
-    _logger.i("TextReaderState disposed.");
-    _debounceTimer?.cancel();
-    disposeCamera(); // Ensure camera is disposed properly
-    _textRecognizer.close();
-    _speechService.stopSpeaking(); // Ensure speech is stopped on dispose
+    logger.i("TextReaderState disposed.");
+    _isServiceDisposed = true; // Set dispose flag immediately
+
+    _liveDetectionDebounceTimer?.cancel();
+    _textInViewFeedbackTimer?.cancel();
+    _speechService.removeListener(
+      _onSpeechStatusChanged,
+    ); // Remove speech listener
+    _cameraService.removeListener(
+      _onCameraServiceStatusChanged,
+    ); // NEW: Remove camera service listener
+
+    // This state no longer disposes the camera itself, CameraService does.
+    // Ensure any internal camera stream callbacks are cleaned up (already done by _liveDetectionDebounceTimer?.cancel())
+
+    _textRecognizer
+        .close()
+        .then((_) {
+          logger.i("TextReaderState: Text recognizer closed.");
+        })
+        .catchError((e) {
+          logger.e("TextReaderState: Error closing text recognizer: $e");
+        });
+
+    _speechService.stopSpeaking(); // Ensure speech is stopped
+
     super.dispose();
+    logger.i("TextReaderState: Disposal process completed.");
   }
 }

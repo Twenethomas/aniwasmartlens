@@ -1,6 +1,9 @@
 import 'dart:async'; // For StreamSubscription
 import 'dart:io';
+import 'dart:typed_data'; // Added for Uint8List and WriteBuffer
+
 import 'package:assist_lens/main.dart';
+import 'package:flutter/foundation.dart' as ui;
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
@@ -11,9 +14,6 @@ import 'package:logger/logger.dart';
 import 'package:vibration/vibration.dart';
 import 'package:latlong2/latlong.dart' as latlong2;
 import 'package:assist_lens/core/services/speech_service.dart';
-
-// Removed TtsState enum as it's not used directly here anymore.
-// TtsState ttsState = TtsState.stopped; // REMOVED
 
 class ActiveNavigationScreen extends StatefulWidget {
   final Position initialPosition;
@@ -46,7 +46,7 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
   String _destinationAddress = 'Loading destination...';
 
   bool _isCameraInitialized = false;
-  bool _isDisposed = false;
+  bool _isDisposed = false; // Flag to track if the widget's state is disposed
 
   @override
   void initState() {
@@ -75,20 +75,28 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
   @override
   void didPush() {
     _logger.i(
-      "ActiveNavigationScreen: didPush - Page is active. Re-initializing camera.",
+      "ActiveNavigationScreen: didPush - Page is active. Re-initializing camera and resuming location.",
     );
-    _initializeCamera();
-    _startLocationUpdates(); // Ensure location updates resume
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _initializeCamera();
+        _startLocationUpdates(); // Ensure location updates resume
+      }
+    });
     super.didPush();
   }
 
   @override
   void didPopNext() {
     _logger.i(
-      "ActiveNavigationScreen: didPopNext - Returning to page. Re-initializing camera.",
+      "ActiveNavigationScreen: didPopNext - Returning to page. Re-initializing camera and resuming location.",
     );
-    _initializeCamera();
-    _startLocationUpdates(); // Ensure location updates resume
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _initializeCamera();
+        _startLocationUpdates(); // Ensure location updates resume
+      }
+    });
     super.didPopNext();
   }
 
@@ -123,75 +131,154 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
   }
 
   Future<void> _initializeCamera() async {
-    if (!mounted) {
-      _logger.w("Widget not mounted during camera initialization attempt.");
-      return;
-    }
-    if (_isCameraInitialized &&
-        _cameraController != null &&
-        _cameraController!.value.isInitialized &&
-        !_isDisposed) {
-      _logger.i(
-        "Camera already initialized/active, skipping re-initialization.",
+    if (!mounted || _isDisposed) {
+      // Added _isDisposed check
+      _logger.w(
+        "Widget not mounted or disposed during camera initialization attempt. Aborting.",
       );
       return;
     }
-
-    _logger.i("Initializing camera for ActiveNavigationScreen...");
-    setState(() {
-      _isCameraInitialized = false;
-      _isDisposed = false;
-    });
-
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    final cameras = await availableCameras();
-    if (cameras.isEmpty) {
-      _logger.e("No cameras found for ActiveNavigationScreen.");
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('No cameras found.')));
-      }
-      return;
-    }
-
-    if (_cameraController != null) {
-      await _disposeCamera();
-      _cameraController = null;
-    }
-
-    _cameraController = CameraController(
-      cameras.first,
-      ResolutionPreset.medium,
-      enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
-    );
-
-    try {
-      await _cameraController!.initialize();
-      if (!mounted) return;
-      setState(() {
-        _isCameraInitialized = true;
-        _isDisposed = false;
-      });
-      _logger.i("Camera initialized successfully for ActiveNavigationScreen.");
-
+    // Prevent re-initialization if already active and initialized.
+    if (_isCameraInitialized &&
+        _cameraController != null &&
+        _cameraController!.value.isInitialized) {
+      _logger.i(
+        "Camera already initialized/active and streaming, skipping re-initialization.",
+      );
+      // Ensure it starts streaming if it's initialized but not currently
       if (!_cameraController!.value.isStreamingImages) {
-        // Only start if not already streaming
         _cameraController!.startImageStream((CameraImage image) {
           _throttler.run(() {
             _processCameraImage(image);
           });
         });
       }
-    } on CameraException catch (e) {
-      _logger.e(
-        "Camera initialization failed for ActiveNavigationScreen: ${e.code}: ${e.description}",
+      return;
+    }
+
+    _logger.i("Initializing camera for ActiveNavigationScreen...");
+    setState(() {
+      _isCameraInitialized = false;
+      _isDisposed = false; // Reset disposed flag on re-initialization attempt
+    });
+
+    await Future.delayed(
+      const Duration(milliseconds: 500),
+    ); // Delay to allow previous resources to clear
+
+    final status =
+        await Permission.camera
+            .request(); // Request camera permission explicitly
+    if (status.isGranted) {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        _logger.e("No cameras found for ActiveNavigationScreen.");
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('No cameras found.')));
+        }
+        setState(() {
+          // Ensure UI updates if no cameras found
+          _isCameraInitialized = false;
+        });
+        return;
+      }
+
+      // Dispose existing controller if it exists and is initialized
+      if (_cameraController != null) {
+        await _disposeCamera(
+          shouldSetState: false,
+        ); // Use robust dispose, but don't setState here
+        _cameraController = null; // Ensure nullified after disposal
+      }
+
+      _cameraController = CameraController(
+        cameras.firstWhere(
+          // Prefer back camera for navigation
+          (cam) => cam.lensDirection == CameraLensDirection.back,
+          orElse: () => cameras.first,
+        ),
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup:
+            Platform.isAndroid
+                ? ImageFormatGroup.nv21
+                : ImageFormatGroup.bgra8888, // Optimal for ML Kit processing
       );
+
+      try {
+        await _cameraController!.initialize();
+        if (!mounted || _isDisposed) {
+          // Check mounted and disposed after async op
+          _logger.w(
+            "ActiveNavigationScreen unmounted or disposed during camera initialization. Disposing new controller.",
+          );
+          await _cameraController!.dispose();
+          _cameraController = null;
+          return;
+        }
+        setState(() {
+          _isCameraInitialized = true;
+          _isDisposed = false;
+        });
+        _logger.i(
+          "Camera initialized successfully for ActiveNavigationScreen.",
+        );
+
+        // Start image stream for live object detection if not already streaming
+        if (!_cameraController!.value.isStreamingImages) {
+          _cameraController!.startImageStream((CameraImage image) {
+            _throttler.run(() {
+              _processCameraImage(image);
+            });
+          });
+        }
+      } on CameraException catch (e) {
+        _logger.e(
+          "Camera initialization failed for ActiveNavigationScreen: ${e.code}: ${e.description}",
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Camera error: ${e.description}')),
+          );
+          setState(() {
+            _isCameraInitialized = false; // Set to false on error
+          });
+        }
+        // Ensure controller is nullified on error
+        if (_cameraController != null) {
+          await _cameraController?.dispose();
+          _cameraController = null;
+        }
+      } catch (e, st) {
+        _logger.e(
+          "Unexpected error during camera init for ActiveNavigationScreen: $e",
+          error: e,
+          stackTrace: st,
+        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'An unexpected error occurred during camera setup.',
+              ),
+            ),
+          );
+          setState(() {
+            _isCameraInitialized = false; // Set to false on error
+          });
+        }
+        if (_cameraController != null) {
+          await _cameraController?.dispose();
+          _cameraController = null;
+        }
+      }
+    } else {
+      _logger.w("Camera permission denied for ActiveNavigationScreen.");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Camera error: ${e.description}')),
+          const SnackBar(content: Text('Camera permission denied.')),
         );
         setState(() {
           _isCameraInitialized = false;
@@ -201,34 +288,47 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
   }
 
   Future<void> _processCameraImage(CameraImage image) async {
-    if (!mounted || _objectDetector == null || _isDisposed) return;
+    if (!mounted ||
+        _objectDetector == null ||
+        _isDisposed ||
+        _cameraController == null) {
+      return; // Added _cameraController null check
+    }
 
     if (_imageSize == Size.zero) {
       _imageSize = Size(image.width.toDouble(), image.height.toDouble());
     }
 
+    // Determine rotation using more robust logic from other files
     final InputImageRotation rotation;
-    switch (image.planes[0].bytesPerRow ~/ image.width) {
-      case 1:
-        rotation = InputImageRotation.rotation0deg;
-        break;
-      case 2:
-        rotation = InputImageRotation.rotation90deg;
-        break;
-      case 4:
-        rotation = InputImageRotation.rotation180deg;
-        break;
-      default:
-        rotation = InputImageRotation.rotation270deg;
-        break;
+    if (Platform.isIOS) {
+      rotation =
+          InputImageRotationValue.fromRawValue(
+            _cameraController!.description.sensorOrientation,
+          )!;
+    } else if (Platform.isAndroid) {
+      int rotationCompensation =
+          _cameraController!.description.sensorOrientation;
+      if (_cameraController!.description.lensDirection ==
+          CameraLensDirection.front) {
+        rotationCompensation = (360 - rotationCompensation) % 360;
+      }
+      rotation = InputImageRotationValue.fromRawValue(rotationCompensation)!;
+    } else {
+      rotation = InputImageRotation.rotation0deg;
     }
 
     final InputImage inputImage = InputImage.fromBytes(
-      bytes: image.planes[0].bytes,
+      bytes: _concatenatePlanes(
+        image.planes,
+      ), // Use helper to concatenate planes
       metadata: InputImageMetadata(
         size: _imageSize,
         rotation: rotation,
-        format: InputImageFormat.nv21,
+        format:
+            Platform.isAndroid
+                ? InputImageFormat.nv21
+                : InputImageFormat.bgra8888, // Specify format
         bytesPerRow: image.planes[0].bytesPerRow,
       ),
     );
@@ -247,7 +347,17 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
     }
   }
 
-  Future<void> _disposeCamera() async {
+  // Helper to concatenate image planes into a single Uint8List for ML Kit
+  Uint8List _concatenatePlanes(List<Plane> planes) {
+    final ui.WriteBuffer allBytes = ui.WriteBuffer();
+    for (Plane plane in planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    return allBytes.done().buffer.asUint8List();
+  }
+
+  // Robust dispose method
+  Future<void> _disposeCamera({bool shouldSetState = true}) async {
     if (_cameraController == null || _isDisposed) {
       _logger.d(
         "Camera controller is already null or disposed. Skipping disposal.",
@@ -255,25 +365,38 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
       return;
     }
     _logger.i("Disposing camera controller for ActiveNavigationScreen.");
-    _isDisposed = true;
+    _isDisposed = true; // Mark as disposed immediately
 
-    if (_cameraController!.value.isStreamingImages) {
-      await _cameraController!.stopImageStream().catchError(
-        (e) => _logger.e("Error stopping image stream: $e"),
+    try {
+      if (_cameraController!.value.isStreamingImages) {
+        await _cameraController!.stopImageStream();
+      }
+      await _cameraController!.dispose();
+      _cameraController = null;
+      _logger.i(
+        "Camera controller for ActiveNavigationScreen successfully disposed.",
       );
+    } on CameraException catch (e, st) {
+      _logger.e(
+        'Error disposing camera: ${e.description}',
+        error: e,
+        stackTrace: st,
+      );
+    } catch (e, st) {
+      _logger.e(
+        'Unexpected error during camera dispose: $e',
+        error: e,
+        stackTrace: st,
+      );
+    } finally {
+      if (mounted && shouldSetState) {
+        setState(() {
+          _isCameraInitialized = false;
+          _detectedObjects = []; // Clear objects
+          _imageSize = Size.zero; // Reset image size
+        });
+      }
     }
-    await _cameraController!.dispose().catchError(
-      (e) => _logger.e("Error disposing camera controller: $e"),
-    );
-    _cameraController = null;
-    if (mounted) {
-      setState(() {
-        _isCameraInitialized = false;
-      });
-    }
-    _logger.i(
-      "Camera controller for ActiveNavigationScreen successfully disposed.",
-    );
   }
 
   Future<void> _startLocationUpdates() async {
@@ -391,6 +514,13 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
     _logger.i(
       "AppLifecycleState changed to: $state for ActiveNavigationScreen.",
     );
+    if (!mounted) {
+      // Add mounted check at the start
+      _logger.d(
+        "ActiveNavigationScreen: Widget not mounted during lifecycle change. Ignoring.",
+      );
+      return;
+    }
     if (_cameraController == null ||
         !_cameraController!.value.isInitialized ||
         _isDisposed) {
@@ -420,7 +550,7 @@ class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
     WidgetsBinding.instance.removeObserver(this);
     routeObserver.unsubscribe(this);
     _positionStreamSubscription?.cancel();
-    _disposeCamera();
+    _disposeCamera(); // Use robust dispose method
     _objectDetector?.close();
     _throttler.dispose();
     super.dispose();

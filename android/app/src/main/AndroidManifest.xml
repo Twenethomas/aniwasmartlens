@@ -13,7 +13,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Required for Android 10 (API 29) and above for foreground services that use the microphone -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
 
     <!-- Optional: If you want to use the default Android Speech Recognizer outside of the plugin -->
     <queries>
@@ -26,7 +27,9 @@
     <application
         android:label="assist_lens"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
+        >
 
         <!-- Declare your foreground service here -->
         <service
@@ -34,6 +37,12 @@
             android:enabled="true"  
             android:exported="false" 
             android:foregroundServiceType="microphone" />
+
+        <!-- Add your Google Maps API Key here -->
+        <!-- IMPORTANT: Replace AIzaSyAqNJcq9hhvuJ6Aeewup5sbk9WnoMYYU08 with your actual Google Maps API Key -->
+        <meta-data android:name="com.google.android.geo.API_KEY"
+                   android:value="AIzaSyAqNJcq9hhvuJ6Aeewup5sbk9WnoMYYU08"/>
+
 
         <activity
             android:name=".MainActivity"

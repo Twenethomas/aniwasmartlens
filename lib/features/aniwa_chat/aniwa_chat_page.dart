@@ -1,19 +1,22 @@
 // lib/features/aniwa_chat/aniwa_chat_page.dart
+// Keep if any Timer or StreamController is used directly in this file
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart'; // Import Provider
-import 'package:logger/logger.dart'; // Import logger
+import 'package:provider/provider.dart';
+import 'package:logger/logger.dart';
+import 'package:animated_text_kit/animated_text_kit.dart';
 
-import 'package:assist_lens/features/aniwa_chat/state/chat_state.dart'; // Import the new ChatState
-import 'package:assist_lens/main.dart'; // Import for routeObserver
+import 'package:assist_lens/features/aniwa_chat/state/chat_state.dart';
+import 'package:assist_lens/main.dart'; // Ensure this import is correct
 
 class AniwaChatPage extends StatefulWidget {
   final String? initialQuery;
-  final bool isForTabInitialization; // New flag
+  final bool isForTabInitialization;
+
   const AniwaChatPage({
     super.key,
     this.initialQuery,
-    this.isForTabInitialization = false, // Default to false
+    this.isForTabInitialization = false,
   });
 
   @override
@@ -27,521 +30,1017 @@ class _AniwaChatPageState extends State<AniwaChatPage>
   final FocusNode _textFocusNode = FocusNode();
   final Logger _logger = Logger();
 
-  late ChatState _chatState; // Reference to ChatState
-
-  // Animation for the AI typing indicator
-  late AnimationController _typingAnimationController;
-  late Animation<double> _typingAnimation;
+  late ChatState _chatState;
+  late AnimationController _pulseController;
+  late AnimationController _waveController;
+  late AnimationController _fadeController;
+  late Animation<double> _pulseAnimation;
+  late Animation<double> _waveAnimation;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
-    _typingAnimationController = AnimationController(
+    _initializeAnimations();
+  }
+
+  void _initializeAnimations() {
+    _pulseController = AnimationController(
+      duration: const Duration(seconds: 2),
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
     )..repeat(reverse: true);
-    _typingAnimation = CurvedAnimation(
-      parent: _typingAnimationController,
-      curve: Curves.easeInOut,
+
+    _waveController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    )..repeat();
+
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
     );
 
-    // Add post frame callback to ensure routeObserver is available
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final route = ModalRoute.of(context);
-      if (route is PageRoute) {
-        // Ensure it's a PageRoute before subscribing
-        routeObserver.subscribe(this, route);
-      } else {
-        _logger.w(
-          "AniwaChatPage: Cannot subscribe to RouteObserver, current route is not a PageRoute.",
-        );
-      }
-    });
+    _pulseAnimation = Tween<double>(begin: 0.8, end: 1.2).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _waveAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _waveController, curve: Curves.easeInOut),
+    );
+
+    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
+    );
+
+    _fadeController.forward();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Get chatState without listening here, as the Consumer handles rebuilding
     _chatState = Provider.of<ChatState>(context, listen: false);
 
-    // Set the navigation callback for ChatState
-    _chatState.onNavigateRequested = (routeName, {arguments}) {
-      if (mounted) {
-        Navigator.of(
-          context,
-        ).pushReplacementNamed(routeName, arguments: arguments);
-      }
-    };
+    // Set the scroll callback in ChatState
+    _chatState.setScrollToBottomCallback(_scrollToBottom);
 
-    // If this page is initialized for a tab (not a direct voice command launch)
-    // and there's an initial query, process it.
-    if (widget.isForTabInitialization &&
-        widget.initialQuery != null &&
-        widget.initialQuery!.isNotEmpty) {
-      _logger.i(
-        "ChatPage: Processing initial query from tab init: ${widget.initialQuery}",
-      );
+    if (!widget.isForTabInitialization) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _chatState.processUserMessage(widget.initialQuery!, context);
-      });
-    } else if (!widget.isForTabInitialization &&
-        _chatState.conversationHistory.isEmpty) {
-      // If not from tab init and chat is empty, give initial greeting
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _chatState.initialGreeting(context); // Pass context here
+        // Initial greeting should only happen once per app launch, or when relevant.
+        // It's better managed by ChatState's own initialization logic.
+        // If initialQuery is provided, we should add it.
+        if (widget.initialQuery != null) {
+          _chatState.addUserMessage(widget.initialQuery!);
+        } else {
+          // If no initial query, and chat history is empty, provide greeting.
+          // This ensures greeting is only given when starting a fresh chat.
+          if (_chatState.conversationHistory.isEmpty) {
+            _chatState.initialGreeting(context);
+          }
+        }
       });
     }
-    _chatState.addListener(_scrollChatToBottom); // Listen for changes to scroll
+
+    // Subscribe to route events for lifecycle management
+    // Only subscribe if the route is valid (not null)
+    final ModalRoute<dynamic>? currentRoute = ModalRoute.of(context);
+    if (currentRoute != null && currentRoute is PageRoute) {
+      routeObserver.subscribe(this, currentRoute);
+    } else {
+      _logger.w(
+        "AniwaChatPage: ModalRoute is null or not a PageRoute, skipping RouteAware subscription.",
+      );
+    }
   }
 
   @override
   void dispose() {
-    routeObserver.unsubscribe(this); // Unsubscribe from route updates
+    _pulseController.dispose();
+    _waveController.dispose();
+    _fadeController.dispose();
     _textInputController.dispose();
     _scrollController.dispose();
     _textFocusNode.dispose();
-    _typingAnimationController.dispose();
-    _chatState.removeListener(_scrollChatToBottom);
-    _chatState.onNavigateRequested = null; // Clear the callback
+    routeObserver.unsubscribe(this); // Unsubscribe from route events
     super.dispose();
   }
 
-  // --- RouteAware Methods ---
+  // --- RouteAware methods for lifecycle management ---
+
   @override
   void didPush() {
-    _logger.i("AniwaChatPage: didPush - Page is active.");
-    // When the page is pushed, ensure continuous listening is active if desired
-    _chatState.startVoiceInput();
-    super.didPush();
+    // This page has been pushed onto the stack and is now fully visible.
+    _logger.i('AniwaChatPage: didPush - Resuming chat state.');
+    _chatState.setChatPageActive(true); // Set chat page active
+    // Resume chat state, which will enable wake word if in voice mode
+    _chatState.resume();
   }
 
   @override
   void didPopNext() {
-    _logger.i("AniwaChatPage: didPopNext - Returning to page.");
-    // When returning to this page from another, resume continuous listening
-    _chatState.startVoiceInput();
-    super.didPopNext();
-  }
-
-  @override
-  void didPushNext() {
-    _logger.i("AniwaChatPage: didPushNext - Navigating away from page.");
-    // When navigating away from this page, stop continuous listening
-    _chatState.stopVoiceInput();
-    super.didPushNext();
+    // This page is re-emerging as the top-most route after another route was popped.
+    _logger.i('AniwaChatPage: didPopNext - Resuming chat state.');
+    _chatState.setChatPageActive(true); // Set chat page active
+    // Resume chat state, which will enable wake word if in voice mode
+    _chatState.resume();
   }
 
   @override
   void didPop() {
-    _logger.i("AniwaChatPage: didPop - Page is being popped.");
-    // When the page is popped, stop continuous listening
-    _chatState.stopVoiceInput();
-    super.didPop();
+    // This page has been popped off the stack and is no longer visible.
+    _logger.i('AniwaChatPage: didPop - Pausing chat state.');
+    _chatState.setChatPageActive(false); // Set chat page inactive
+    // Pause chat state to stop microphone use when not on this screen
+    // _chatState.pause();
   }
 
-  void _scrollChatToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+  @override
+  void didPushNext() {
+    // Another page has been pushed on top of this one, making this page inactive.
+    _logger.i('AniwaChatPage: didPushNext - Pausing chat state.');
+    _chatState.setChatPageActive(false); // Set chat page inactive
+    // Pause chat state to stop microphone use when not on this screen
+    // _chatState.pause();
   }
 
-  void _sendMessage() {
-    if (_textInputController.text.trim().isNotEmpty) {
-      _chatState.sendMessage(
-        _textInputController.text.trim(),
-        context,
-      ); // Pass context here
-      _textInputController.clear();
-      _textFocusNode.unfocus(); // Close keyboard after sending
+  // --- End RouteAware methods ---
+
+  void _scrollToBottom() {
+    _logger.d("AniwaChatPage._scrollToBottom: Attempting to scroll.");
+    if (_scrollController.hasClients) {
+      // Use a post-frame callback to ensure layout has occurred for new items
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+          _logger.d(
+            "AniwaChatPage._scrollToBottom: Scrolled to bottom. Max extent: ${_scrollController.position.maxScrollExtent}",
+          );
+        } else {
+          _logger.w(
+            "AniwaChatPage._scrollToBottom: ScrollController lost clients after post-frame callback.",
+          );
+        }
+      });
+    } else {
+      _logger.w(
+        "AniwaChatPage._scrollToBottom: ScrollController has no clients, cannot scroll.",
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme; // Get textTheme here
-    // Watch ChatState for changes to rebuild UI
-    final chatState = context.watch<ChatState>();
+    final chatTheme = Theme.of(context).extension<ChatThemeExtension>()!;
 
     return Scaffold(
-      backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        backgroundColor:
-            colorScheme.surface, // AppBar background matches surface
-        elevation: 0,
-        title: Text(
-          'Chat with Aniwa',
-          style: GoogleFonts.sourceCodePro(
-            color: colorScheme.onSurface,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: Consumer<ChatState>(
+        builder: (context, chatState, child) {
+          // This ensures that the UI rebuilds whenever ChatState notifies listeners.
+          // The scrolling itself is now triggered directly by ChatState after adding messages.
+          _logger.d(
+            "AniwaChatPage: Consumer rebuild. History length: ${chatState.conversationHistory.length}, Is processing AI: ${chatState.isProcessingAI}",
+          );
+
+          return Container(
+            decoration: BoxDecoration(gradient: chatTheme.chatBackground),
+            child: SafeArea(
+              child: Column(
+                children: [
+                  _buildHeader(chatState, chatTheme),
+                  Expanded(child: _buildChatArea(chatState, chatTheme)),
+                  _buildInputArea(chatState, chatTheme),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHeader(ChatState chatState, ChatThemeExtension chatTheme) {
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: Container(
+        padding: const EdgeInsets.only(right: 5.0),
+        child: Row(
+          children: [
+            IconButton(
+              icon: Icon(Icons.arrow_back),
+              onPressed: () => Navigator.pop(context),
+            ),
+            _buildAIAvatar(chatState, chatTheme),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Aniwa AI',
+                    style: GoogleFonts.orbitron(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.onSurface,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  _buildStatusText(chatState, chatTheme),
+                ],
+              ),
+            ),
+            _buildWakeWordIndicator(chatState, chatTheme),
+          ],
         ),
-        centerTitle: true,
-        leading: IconButton(
-          icon: Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: colorScheme.onSurface,
-          ),
-          onPressed: () {
-            Navigator.pop(context);
-          },
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.refresh_rounded, color: colorScheme.onSurface),
-            onPressed: () {
-              _chatState.clearChatHistory();
-            },
-            tooltip: 'Clear Chat',
+      ),
+    );
+  }
+
+  Widget _buildAIAvatar(ChatState chatState, ChatThemeExtension chatTheme) {
+    return Container(
+      width: 50,
+      height: 50,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient:
+            chatState.isSpeaking
+                ? chatTheme.speakingGradient
+                : chatTheme.aiAvatarGradient,
+        boxShadow: [
+          BoxShadow(
+            color: (chatState.isSpeaking
+                    ? Theme.of(context).colorScheme.secondary
+                    : Theme.of(context).colorScheme.primary)
+                .withOpacity(0.3),
+            blurRadius: 20,
+            spreadRadius: 2,
           ),
         ],
       ),
-      body: Column(
+      child: AnimatedBuilder(
+        animation: chatState.isSpeaking ? _pulseAnimation : _fadeAnimation,
+        builder: (context, child) {
+          return Transform.scale(
+            scale: chatState.isSpeaking ? _pulseAnimation.value : 1.0,
+            child: const Icon(Icons.psychology, color: Colors.white, size: 24),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildStatusText(ChatState chatState, ChatThemeExtension chatTheme) {
+    String statusText;
+    Color statusColor;
+
+    if (chatState.errorMessage != null && chatState.errorMessage!.isNotEmpty) {
+      statusText = 'Error: ${chatState.errorMessage}';
+      statusColor = Colors.red;
+    } else if (chatState.isProcessingAI) {
+      statusText = 'Thinking...';
+      statusColor = chatTheme.statusColors.thinking;
+    } else if (chatState.isSpeaking) {
+      statusText = 'Speaking';
+      statusColor = chatTheme.statusColors.speaking;
+    } else if (chatState.isListening) {
+      statusText = 'Listening';
+      statusColor = chatTheme.statusColors.listening;
+    } else if (chatState.isWakeWordListening) {
+      statusText = 'Say "Assist Lens"';
+      statusColor = chatTheme.statusColors.wakeWord;
+    } else {
+      statusText = 'Ready';
+      statusColor = chatTheme.statusColors.ready;
+    }
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      child: Text(
+        statusText,
+        key: ValueKey(statusText),
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          color: statusColor,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWakeWordIndicator(
+    ChatState chatState,
+    ChatThemeExtension chatTheme,
+  ) {
+    return AnimatedBuilder(
+      animation: _waveAnimation,
+      builder: (context, child) {
+        return Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color:
+                chatState.isWakeWordListening
+                    ? chatTheme.wakeWordColor.withOpacity(0.2)
+                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+            border: Border.all(
+              color:
+                  chatState.isWakeWordListening
+                      ? chatTheme.wakeWordColor.withOpacity(0.5)
+                      : Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.3),
+              width: 2,
+            ),
+          ),
+          child:
+              chatState.isWakeWordListening
+                  ? Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // Animated rings
+                      for (int i = 0; i < 3; i++)
+                        AnimatedBuilder(
+                          animation: _waveAnimation,
+                          builder: (context, child) {
+                            final delay = i * 0.3;
+                            final animationValue =
+                                (_waveAnimation.value + delay) % 1.0;
+                            return Container(
+                              width: 20 + (animationValue * 20),
+                              height: 20 + (animationValue * 20),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: chatTheme.wakeWordColor.withOpacity(
+                                    1 - animationValue,
+                                  ),
+                                  width: 1,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      Icon(Icons.mic, color: chatTheme.wakeWordColor, size: 16),
+                    ],
+                  )
+                  : Icon(
+                    Icons.mic_off,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.5),
+                    size: 16,
+                  ),
+        );
+      },
+    );
+  }
+
+  Widget _buildChatArea(ChatState chatState, ChatThemeExtension chatTheme) {
+    _logger.d(
+      "AniwaChatPage: Building chat area. History length: ${chatState.conversationHistory.length}, Is processing AI: ${chatState.isProcessingAI}",
+    );
+
+    if (chatState.conversationHistory.isEmpty) {
+      return _buildEmptyState(chatTheme);
+    }
+
+    // The conversationHistory now inherently handles the streaming message
+    int totalItems = chatState.conversationHistory.length;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      child: ListView.builder(
+        controller: _scrollController,
+        padding: const EdgeInsets.only(bottom: 20),
+        key: ValueKey(
+          'unified_chat_list_${chatState.conversationHistory.length}_${chatState.isProcessingAI}',
+        ), // Simplify key as partial message is now within history
+        itemCount: totalItems,
+        itemBuilder: (context, index) {
+          _logger.d(
+            "AniwaChatPage: ListView.builder building item at index $index, total items: $totalItems",
+          );
+
+          final message = chatState.conversationHistory[index];
+          final isUser = message['role'] == 'user';
+
+          // Determine if this is the last AI message currently being streamed
+          final bool isPartialMessageBeingStreamed =
+              !isUser && // It's an assistant message
+              chatState.isProcessingAI && // AI is currently processing
+              index ==
+                  totalItems - 1 && // It's the very last message in the list
+              (message['content']?.isEmpty ??
+                  true); // And its content is still empty or being filled
+
+          return _buildMessageBubble(
+            message['content'] ?? '',
+            isUser,
+            index,
+            chatTheme,
+            isPartial: isPartialMessageBeingStreamed,
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(
+    String content,
+    bool isUser,
+    int index,
+    ChatThemeExtension chatTheme, {
+    bool isPartial = false, // Add this parameter
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child:
-                chatState.conversationHistory.isEmpty &&
-                        !chatState.isProcessingAI
-                    ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+          if (!isUser) ...[
+            _buildMessageAvatar(false, chatTheme),
+            const SizedBox(width: 12),
+          ],
+          Flexible(
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.75,
+              ),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient: isUser ? chatTheme.userMessageGradient : null,
+                color: isUser ? null : chatTheme.aiMessageBackground,
+                borderRadius: BorderRadius.circular(20).copyWith(
+                  topLeft:
+                      isUser
+                          ? const Radius.circular(20)
+                          : const Radius.circular(4),
+                  topRight:
+                      isUser
+                          ? const Radius.circular(4)
+                          : const Radius.circular(20),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color:
+                        isUser
+                            ? Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.2)
+                            : Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withOpacity(0.1),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (content.isNotEmpty)
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      child: Text(
+                        content,
+                        key: ValueKey('message_${index}_partial_$isPartial'),
+                        style: GoogleFonts.inter(
+                          fontSize: 16,
+                          color:
+                              isUser
+                                  ? Colors.white
+                                  : Theme.of(context).colorScheme.onSurface,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _formatTimestamp(DateTime.now()),
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color:
+                              isUser
+                                  ? Colors.white.withOpacity(0.8)
+                                  : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                      if (isUser) ...[
+                        const SizedBox(width: 8),
+                        Icon(
+                          Icons.check,
+                          size: 14,
+                          color: Colors.white.withOpacity(0.8),
+                        ),
+                      ],
+                    ],
+                  ),
+                  // Show partial indicator for streaming messages
+                  if (isPartial)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.chat_bubble_outline_rounded,
-                            size: 80,
-                            color: colorScheme.onSurface.withAlpha(
-                              (0.3 * 255).round(),
+                          SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(
+                                  context,
+                                ).colorScheme.primary.withOpacity(0.7),
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(width: 6),
                           Text(
-                            'No recent chats. Start a new conversation!',
+                            'Receiving...',
                             style: GoogleFonts.inter(
-                              color: colorScheme.onSurface.withAlpha(
-                                (0.7 * 255).round(),
-                              ),
-                              fontSize: 16,
+                              fontSize: 10,
+                              fontStyle: FontStyle.italic,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.5),
                             ),
-                            textAlign: TextAlign.center,
                           ),
                         ],
                       ),
-                    )
-                    : ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.all(16.0),
-                      itemCount:
-                          chatState.conversationHistory.length +
-                          (chatState.isProcessingAI ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index < chatState.conversationHistory.length) {
-                          final message = chatState.conversationHistory[index];
-                          // Pass textTheme to the chat bubble builder
-                          return _buildChatBubble(
-                            message['role']!,
-                            message['content']!,
-                            textTheme,
-                          );
-                        } else {
-                          // AI typing indicator
-                          return _buildTypingIndicator(colorScheme);
-                        }
-                      },
                     ),
-          ),
-          if (chatState.errorMessage != null &&
-              chatState.errorMessage!.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8.0),
-              color: colorScheme.error.withAlpha((0.2 * 255).round()),
-              child: Text(
-                chatState.errorMessage!,
-                style: TextStyle(color: colorScheme.onError),
-                textAlign: TextAlign.center,
+                ],
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.only(
-              left: 16.0,
-              right: 16.0,
-              bottom: 8.0,
-              top: 8.0,
+          ),
+          if (isUser) ...[
+            const SizedBox(width: 12),
+            _buildMessageAvatar(true, chatTheme),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageAvatar(bool isUser, ChatThemeExtension chatTheme) {
+    return Container(
+      width: 32,
+      height: 32,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient:
+            isUser ? chatTheme.userAvatarGradient : chatTheme.aiAvatarGradient,
+        boxShadow: [
+          BoxShadow(
+            color: (isUser
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.tertiary)
+                .withOpacity(0.3),
+            blurRadius: 8,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Icon(
+        isUser ? Icons.person : Icons.psychology,
+        color: Colors.white,
+        size: 18,
+      ),
+    );
+  }
+
+  Widget _buildTypingIndicator(ChatThemeExtension chatTheme) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildMessageAvatar(false, chatTheme),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: chatTheme.aiMessageBackground,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(4),
+                topRight: Radius.circular(20),
+                bottomLeft: Radius.circular(20),
+                bottomRight: Radius.circular(20),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            child: Column(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                if (chatState.isSpeaking)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.volume_up, color: colorScheme.primary),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            chatState.aiSpeakingFullText,
-                            style: GoogleFonts.inter(
-                              color: colorScheme.onSurface,
-                              fontSize: 14,
-                              fontStyle: FontStyle.italic,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.stop, color: colorScheme.primary),
-                          onPressed: () {
-                            _chatState.stopSpeaking();
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                if (chatState.currentInputMode == InputMode.voice &&
-                    chatState.isListening)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4.0),
-                    child: Text(
-                      chatState.recognizedText.isEmpty
-                          ? 'Listening...'
-                          : chatState.recognizedText,
-                      style: GoogleFonts.inter(
-                        color: colorScheme.primary,
-                        fontStyle: FontStyle.italic,
-                        fontSize: 14,
+                AnimatedTextKit(
+                  animatedTexts: [
+                    TypewriterAnimatedText(
+                      'Typing...',
+                      textStyle: GoogleFonts.inter(
+                        fontSize: 16,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7),
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                Row(
-                  children: [
-                    // Keyboard Icon (toggles to text input)
-                    IconButton(
-                      icon: Icon(
-                        Icons.keyboard_alt_rounded,
-                        color:
-                            chatState.currentInputMode == InputMode.text
-                                ? colorScheme.primary
-                                : colorScheme.onSurface.withOpacity(0.7),
-                      ),
-                      onPressed: () {
-                        chatState.setInputMode(InputMode.text);
-                      },
-                      tooltip: 'Type message',
-                    ),
-                    // Camera Icon (for image input)
-                    IconButton(
-                      icon: Icon(
-                        Icons.camera_alt_rounded,
-                        color: colorScheme.onSurface.withOpacity(0.7),
-                      ),
-                      onPressed: () {
-                        // Handle camera input (e.g., navigate to scene description or object detection)
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Image input coming soon!')),
-                        );
-                      },
-                      tooltip: 'Send image',
-                    ),
-                    Expanded(
-                      child: Container(
-                        height: 50, // Fixed height for mic button container
-                        margin: const EdgeInsets.symmetric(horizontal: 8.0),
-                        child:
-                            chatState.currentInputMode == InputMode.voice
-                                ? ElevatedButton(
-                                  onPressed:
-                                      chatState.isProcessingAI
-                                          ? null // Disable button if AI is processing
-                                          : () {
-                                            if (chatState.isListening) {
-                                              _chatState.stopVoiceInput();
-                                            } else {
-                                              _chatState.startVoiceInput();
-                                            }
-                                          },
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor:
-                                        chatState.isProcessingAI
-                                            ? colorScheme.primary.withAlpha(
-                                              (0.5 * 255).round(),
-                                            )
-                                            : colorScheme.primary,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(25.0),
-                                    ),
-                                    padding:
-                                        EdgeInsets
-                                            .zero, // Remove default padding
-                                    minimumSize: const Size(
-                                      double.infinity,
-                                      50,
-                                    ), // Ensure it fills horizontally and has height
-                                  ),
-                                  child: Icon(
-                                    chatState.isListening
-                                        ? Icons.mic_off
-                                        : Icons.mic,
-                                    color: colorScheme.onPrimary,
-                                    size: 28,
-                                  ),
-                                )
-                                : TextField(
-                                  controller: _textInputController,
-                                  focusNode: _textFocusNode,
-                                  onSubmitted:
-                                      (_) =>
-                                          _sendMessage(), // Send message on enter key
-                                  decoration: InputDecoration(
-                                    hintText: 'Type your message...',
-                                    hintStyle: textTheme.bodyMedium?.copyWith(
-                                      color: colorScheme.onSurface.withOpacity(
-                                        0.6,
-                                      ),
-                                    ),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(25.0),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    filled: true,
-                                    fillColor:
-                                        colorScheme.surfaceContainerHighest,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 20,
-                                      vertical: 10,
-                                    ),
-                                  ),
-                                  style: textTheme.bodyMedium?.copyWith(
-                                    color: colorScheme.onSurface,
-                                  ),
-                                ),
-                      ),
-                    ),
-                    // Send/Stop Mic Button on Right
-                    FloatingActionButton(
-                      onPressed:
-                          chatState.currentInputMode == InputMode.text
-                              ? _sendMessage // Send message for text mode
-                              : (chatState.isProcessingAI ||
-                                      chatState.isSpeaking
-                                  ? null // Disable if AI processing or speaking
-                                  : (chatState.isListening
-                                      ? _chatState.stopVoiceInput
-                                      : _chatState.startVoiceInput)),
-                      backgroundColor:
-                          chatState.isProcessingAI || chatState.isSpeaking
-                              ? colorScheme.primary.withAlpha(
-                                (0.5 * 255).round(),
-                              )
-                              : (chatState.currentInputMode ==
-                                          InputMode.voice &&
-                                      chatState.isListening
-                                  ? colorScheme
-                                      .error // Red for stop listening
-                                  : colorScheme.primary),
-                      mini: true,
-                      child: Icon(
-                        chatState.currentInputMode == InputMode.text
-                            ? Icons.send
-                            : (chatState.isListening
-                                ? Icons.stop_rounded
-                                : Icons.mic),
-                        color: colorScheme.onPrimary,
-                      ),
+                      speed: const Duration(milliseconds: 200),
                     ),
                   ],
+                  isRepeatingAnimation: true,
+                  repeatForever: true,
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 40,
+                  height: 20,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: List.generate(3, (index) {
+                      return AnimatedBuilder(
+                        animation: _waveAnimation,
+                        builder: (context, child) {
+                          final delay = index * 0.2;
+                          final animationValue =
+                              (_waveAnimation.value + delay) % 1.0;
+                          return Transform.translate(
+                            offset: Offset(
+                              0,
+                              -5 * (1 - (animationValue * 2 - 1).abs()),
+                            ),
+                            child: Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withOpacity(0.7),
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    }),
+                  ),
                 ),
               ],
             ),
           ),
-          SizedBox(
-            height: MediaQuery.of(context).padding.bottom,
-          ), // Adjust for soft keyboard
         ],
       ),
     );
   }
 
-  Widget _buildTypingIndicator(ColorScheme colorScheme) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-        decoration: BoxDecoration(
-          color: colorScheme.secondaryContainer,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(4),
-            bottomRight: Radius.circular(16),
+  Widget _buildInputArea(ChatState chatState, ChatThemeExtension chatTheme) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, -2),
           ),
-        ),
+        ],
+      ),
+      child: SafeArea(
         child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(3, (index) {
-            return FadeTransition(
-              opacity: _typingAnimation,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2.0),
-                child: CircleAvatar(
-                  radius: 4,
-                  backgroundColor: colorScheme.onSecondaryContainer,
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: chatTheme.inputBackground,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color:
+                        _textFocusNode.hasFocus
+                            ? chatTheme.focusedInputBorder
+                            : chatTheme.inputBorder,
+                    width: 2,
+                  ),
+                ),
+                child: TextField(
+                  controller: _textInputController,
+                  focusNode: _textFocusNode,
+                  maxLines: null,
+                  minLines: 1,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  enabled: !chatState.isProcessingAI,
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  decoration: InputDecoration(
+                    hintText:
+                        chatState.isProcessingAI
+                            ? 'AI is thinking...'
+                            : 'Type your message...',
+                    hintStyle: GoogleFonts.inter(
+                      fontSize: 16,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.6),
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                  onSubmitted: (text) {
+                    if (text.trim().isNotEmpty && !chatState.isProcessingAI) {
+                      _sendMessage(chatState, text.trim());
+                    }
+                  },
                 ),
               ),
-            );
-          }),
+            ),
+            const SizedBox(width: 12),
+            _buildMicButton(chatState, chatTheme),
+            const SizedBox(width: 8),
+            _buildSendButton(chatState, chatTheme),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildChatBubble(String role, String text, TextTheme textTheme) {
-    // Added textTheme parameter
-    final isUser = role == 'user';
-    final alignment = isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final bubbleColor =
-        isUser
-            ? Theme.of(context).colorScheme.primary.withAlpha(
-              (0.15 * 255).round(),
-            ) // User bubble color
-            : Theme.of(
-              context,
-            ).colorScheme.surfaceContainerHighest; // Aniwa bubble color
-    final textColor = Theme.of(context).colorScheme.onSurface;
+  // Override _sendMessage to handle interruption
+  void _sendMessage(ChatState chatState, String message) {
+    if (message.isEmpty) return;
 
-    return Align(
-      alignment: alignment,
+    _textInputController.clear();
+    _textFocusNode.unfocus();
+
+    // Interrupt any ongoing AI speech and restart listening
+    chatState.handleInterruption();
+
+    // The scroll will be triggered by ChatState itself via the callback
+    chatState.addUserMessage(message);
+  }
+
+  // Override _toggleListening to disable mic button during processing
+  void _toggleListening(ChatState chatState) {
+    if (chatState.isProcessingAI) return;
+
+    if (chatState.isListening) {
+      chatState.stopVoiceInput();
+    } else {
+      chatState.startVoiceInput();
+    }
+  }
+
+  Widget _buildMicButton(ChatState chatState, ChatThemeExtension chatTheme) {
+    return GestureDetector(
+      onTap:
+          chatState.isProcessingAI ? null : () => _toggleListening(chatState),
       child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.75,
-        ),
-        margin: const EdgeInsets.symmetric(vertical: 8),
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        width: 48,
+        height: 48,
         decoration: BoxDecoration(
-          color: bubbleColor,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(16),
-            topRight: const Radius.circular(16),
-            bottomLeft:
-                isUser ? const Radius.circular(16) : const Radius.circular(4),
-            bottomRight:
-                isUser ? const Radius.circular(4) : const Radius.circular(16),
+          shape: BoxShape.circle,
+          color:
+              chatState.isListening
+                  ? chatTheme.wakeWordColor.withOpacity(0.2)
+                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.1),
+          border: Border.all(
+            color:
+                chatState.isListening
+                    ? chatTheme.wakeWordColor
+                    : Theme.of(context).colorScheme.onSurface.withOpacity(0.3),
+            width: 2,
           ),
         ),
-        child: Text(
-          text,
-          style: GoogleFonts.inter(color: textColor, fontSize: 15),
+        child: AnimatedBuilder(
+          animation: chatState.isListening ? _pulseAnimation : _fadeAnimation,
+          builder: (context, child) {
+            return Transform.scale(
+              scale:
+                  chatState.isListening
+                      ? _pulseAnimation.value * 0.1 + 0.9
+                      : 1.0,
+              child: Icon(
+                chatState.isListening ? Icons.mic : Icons.mic_none,
+                color:
+                    chatState.isListening
+                        ? chatTheme.wakeWordColor
+                        : Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withOpacity(0.7),
+                size: 24,
+              ),
+            );
+          },
         ),
       ),
     );
+  }
+
+  Widget _buildSendButton(ChatState chatState, ChatThemeExtension chatTheme) {
+    final hasText = _textInputController.text.trim().isNotEmpty;
+
+    return GestureDetector(
+      onTap:
+          (hasText && !chatState.isProcessingAI)
+              ? () => _sendMessage(chatState, _textInputController.text.trim())
+              : null,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient:
+              (hasText && !chatState.isProcessingAI)
+                  ? chatTheme.sendButtonGradient
+                  : null,
+          color:
+              (!hasText || chatState.isProcessingAI)
+                  ? Theme.of(context).colorScheme.onSurface.withOpacity(0.2)
+                  : null,
+        ),
+        child: Icon(
+          Icons.send,
+          color:
+              (hasText && !chatState.isProcessingAI)
+                  ? Colors.white
+                  : Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+          size: 20,
+        ),
+      ),
+    );
+  }
+
+  // Override _sendMessage to handle interruption
+  void _sendMessageWithInterruption(ChatState chatState, String message) {
+    if (message.isEmpty) return;
+
+    _textInputController.clear();
+    _textFocusNode.unfocus();
+
+    // Interrupt any ongoing AI speech and restart listening
+    chatState.handleInterruption();
+
+    // The scroll will be triggered by ChatState itself via the callback
+    chatState.addUserMessage(message);
+  }
+
+  Widget _buildEmptyState(ChatThemeExtension chatTheme) {
+    return Center(
+      child: FadeTransition(
+        opacity: _fadeAnimation,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: chatTheme.aiAvatarGradient,
+                boxShadow: [
+                  BoxShadow(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withOpacity(0.3),
+                    blurRadius: 30,
+                    spreadRadius: 10,
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.psychology,
+                color: Colors.white,
+                size: 50,
+              ),
+            ),
+            const SizedBox(height: 30),
+            Text(
+              'Welcome to Aniwa AI',
+              style: GoogleFonts.orbitron(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                'Your intelligent assistant is ready to help.\nSay "Assist Lens" to start a conversation.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.7),
+                  height: 1.5,
+                ),
+              ),
+            ),
+            const SizedBox(height: 30),
+            _buildQuickActions(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActions() {
+    final actions = [
+      {'icon': Icons.help_outline, 'text': 'Ask a question'},
+      {'icon': Icons.navigation, 'text': 'Get directions'},
+      {'icon': Icons.chat, 'text': 'Start chatting'},
+    ];
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children:
+          actions.map((action) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.2),
+                ),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.05),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    action['icon'] as IconData,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.7),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    action['text'] as String,
+                    style: GoogleFonts.inter(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+    );
+  }
+
+  // Override _toggleListening to disable mic button during processing
+  void _toggleListeningWithProcessingCheck(ChatState chatState) {
+    if (chatState.isProcessingAI) return;
+
+    if (chatState.isListening) {
+      chatState.stopVoiceInput();
+    } else {
+      chatState.startVoiceInput();
+    }
+  }
+
+  String _formatTimestamp(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inMinutes < 1) {
+      return 'Just now';
+    } else if (difference.inHours < 1) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inDays < 1) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${dateTime.day}/${dateTime.month}';
+    }
   }
 }

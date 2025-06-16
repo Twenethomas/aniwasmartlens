@@ -3,14 +3,14 @@ import 'dart:io';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart'; // Correct import for TextRecognizer
 import 'package:logger/logger.dart';
 
-class NativeTextReaderService {
+class TextReaderServices {
   final Logger _logger = Logger();
   final TextRecognizer _textRecognizer;
 
   /// Constructor for NativeTextReaderService.
   /// [language] is the BCP-47 language code for the text to be recognized.
   /// Defaults to 'en' (English).
-  NativeTextReaderService({String language = 'en'})
+  TextReaderServices({String language = 'en'})
     : _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
   /// Recognizes text from a given image file.
