@@ -13,6 +13,7 @@ import '../../core/services/network_service.dart'; // Now explicitly used
 import '../../core/services/speech_service.dart';
 import '../../core/services/face_recognizer_service.dart';
 import '../../core/services/camera_service.dart'; // NEW: Import CameraService
+import '../../core/services/face_database_helper.dart'; // Import Database Helper
 import '../../core/utils/throttler.dart'; // NEW: Import Throttler
 
 /// Manages the state for facial recognition, including camera setup,
@@ -23,6 +24,7 @@ class FacialRecognitionState extends ChangeNotifier {
   final SpeechService _speechService;
   final FaceRecognizerService _faceRecognizerService;
   final NetworkService _networkService; // Injected NetworkService
+  // final FaceDatabaseHelper _faceDatabaseHelper; // No longer needed here, FaceRecognizerService handles it
 
   final Logger _logger = logger; // Using global logger
 
@@ -37,7 +39,8 @@ class FacialRecognitionState extends ChangeNotifier {
   );
 
   final Throttler _throttler = Throttler(
-    milliseconds: 500,
+    milliseconds: 1000,
+    
   ); // Process frames every 500ms
 
   // State variables
@@ -62,15 +65,20 @@ class FacialRecognitionState extends ChangeNotifier {
   bool get isRegistered => _isRegistered;
   bool get registrationInProgress => _registrationInProgress;
 
+  // Expose FaceRecognizerService
+  FaceRecognizerService get faceRecognizerService => _faceRecognizerService;
+
   FacialRecognitionState({
     required NetworkService networkService,
     required SpeechService speechService,
     required FaceRecognizerService faceRecognizerService,
     required CameraService cameraService, // NEW: CameraService injected
+    required FaceDatabaseHelper faceDatabaseHelper, // Still required by constructor for main.dart setup
   }) : _networkService = networkService,
        _speechService = speechService,
        _faceRecognizerService = faceRecognizerService,
        _cameraService = cameraService {
+       // _faceDatabaseHelper = faceDatabaseHelper; // Not stored locally anymore
     // Assign injected CameraService
     _cameraService.addListener(
       _onCameraServiceStatusChanged,
@@ -113,6 +121,11 @@ class FacialRecognitionState extends ChangeNotifier {
       _logger.i(
         "FacialRecognitionState: Camera initialized via CameraService.",
       );
+      // Load faces from DB after camera is ready
+      await _faceRecognizerService.loadFacesFromDatabase();
+      _logger.i(
+        "FacialRecognitionState: Known faces loaded from database.",
+      );
     } else {
       _logger.e(
         "FacialRecognitionState: Camera not ready after CameraService initialization.",
@@ -152,6 +165,10 @@ class FacialRecognitionState extends ChangeNotifier {
     setIsProcessingAI(false); // Reset processing flag
 
     await _cameraService.startImageStream((CameraImage image) {
+      // Ensure faces are loaded before processing stream
+      if (_faceRecognizerService.knownFaces.isEmpty) { 
+        _faceRecognizerService.loadFacesFromDatabase();
+      }
       _throttler.run(() {
         if (!_isDisposed) {
           // Ensure state is not disposed before processing

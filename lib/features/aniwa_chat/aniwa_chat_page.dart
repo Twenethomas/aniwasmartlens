@@ -107,7 +107,9 @@ class _AniwaChatPageState extends State<AniwaChatPage>
     if (currentRoute != null && currentRoute is PageRoute) {
       routeObserver.subscribe(this, currentRoute);
     } else {
-      _logger.w("AniwaChatPage: ModalRoute is null or not a PageRoute, skipping RouteAware subscription.");
+      _logger.w(
+        "AniwaChatPage: ModalRoute is null or not a PageRoute, skipping RouteAware subscription.",
+      );
     }
   }
 
@@ -129,6 +131,7 @@ class _AniwaChatPageState extends State<AniwaChatPage>
   void didPush() {
     // This page has been pushed onto the stack and is now fully visible.
     _logger.i('AniwaChatPage: didPush - Resuming chat state.');
+    _chatState.setChatPageActive(true); // Set chat page active
     // Resume chat state, which will enable wake word if in voice mode
     _chatState.resume();
   }
@@ -137,6 +140,7 @@ class _AniwaChatPageState extends State<AniwaChatPage>
   void didPopNext() {
     // This page is re-emerging as the top-most route after another route was popped.
     _logger.i('AniwaChatPage: didPopNext - Resuming chat state.');
+    _chatState.setChatPageActive(true); // Set chat page active
     // Resume chat state, which will enable wake word if in voice mode
     _chatState.resume();
   }
@@ -145,16 +149,18 @@ class _AniwaChatPageState extends State<AniwaChatPage>
   void didPop() {
     // This page has been popped off the stack and is no longer visible.
     _logger.i('AniwaChatPage: didPop - Pausing chat state.');
+    _chatState.setChatPageActive(false); // Set chat page inactive
     // Pause chat state to stop microphone use when not on this screen
-    _chatState.pause();
+    // _chatState.pause();
   }
 
   @override
   void didPushNext() {
     // Another page has been pushed on top of this one, making this page inactive.
     _logger.i('AniwaChatPage: didPushNext - Pausing chat state.');
+    _chatState.setChatPageActive(false); // Set chat page inactive
     // Pause chat state to stop microphone use when not on this screen
-    _chatState.pause();
+    // _chatState.pause();
   }
 
   // --- End RouteAware methods ---
@@ -221,9 +227,13 @@ class _AniwaChatPageState extends State<AniwaChatPage>
     return FadeTransition(
       opacity: _fadeAnimation,
       child: Container(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.only(right: 5.0),
         child: Row(
           children: [
+            IconButton(
+              icon: Icon(Icons.arrow_back),
+              onPressed: () => Navigator.pop(context),
+            ),
             _buildAIAvatar(chatState, chatTheme),
             const SizedBox(width: 16),
             Expanded(
@@ -396,156 +406,48 @@ class _AniwaChatPageState extends State<AniwaChatPage>
       "AniwaChatPage: Building chat area. History length: ${chatState.conversationHistory.length}, Is processing AI: ${chatState.isProcessingAI}",
     );
 
-    if (chatState.conversationHistory.isEmpty && !chatState.isProcessingAI) {
+    if (chatState.conversationHistory.isEmpty) {
       return _buildEmptyState(chatTheme);
     }
+
+    // The conversationHistory now inherently handles the streaming message
+    int totalItems = chatState.conversationHistory.length;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       child: ListView.builder(
         controller: _scrollController,
         padding: const EdgeInsets.only(bottom: 20),
-        // Ensure we rebuild when history changes, and also when AI starts/stops processing
         key: ValueKey(
-          'chat_list_${chatState.conversationHistory.length}_${chatState.isProcessingAI}',
-        ),
-        itemCount:
-            chatState.conversationHistory.length +
-            (chatState.isProcessingAI ? 1 : 0),
+          'unified_chat_list_${chatState.conversationHistory.length}_${chatState.isProcessingAI}',
+        ), // Simplify key as partial message is now within history
+        itemCount: totalItems,
         itemBuilder: (context, index) {
           _logger.d(
-            "AniwaChatPage: ListView.builder building item at index $index, total items: ${chatState.conversationHistory.length + (chatState.isProcessingAI ? 1 : 0)}",
+            "AniwaChatPage: ListView.builder building item at index $index, total items: $totalItems",
           );
-
-          if (index == chatState.conversationHistory.length) {
-            // This is the typing indicator, only shown when AI is processing and it's the last item
-            return _buildTypingIndicator(chatTheme);
-          }
 
           final message = chatState.conversationHistory[index];
           final isUser = message['role'] == 'user';
 
+          // Determine if this is the last AI message currently being streamed
+          final bool isPartialMessageBeingStreamed =
+              !isUser && // It's an assistant message
+              chatState.isProcessingAI && // AI is currently processing
+              index ==
+                  totalItems - 1 && // It's the very last message in the list
+              (message['content']?.isEmpty ??
+                  true); // And its content is still empty or being filled
+
           return _buildMessageBubble(
-            message['content'] ?? '', // Handle null content gracefully
+            message['content'] ?? '',
             isUser,
             index,
             chatTheme,
+            isPartial: isPartialMessageBeingStreamed,
           );
         },
       ),
-    );
-  }
-
-  Widget _buildEmptyState(ChatThemeExtension chatTheme) {
-    return Center(
-      child: FadeTransition(
-        opacity: _fadeAnimation,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: chatTheme.aiAvatarGradient,
-                boxShadow: [
-                  BoxShadow(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.primary.withOpacity(0.3),
-                    blurRadius: 30,
-                    spreadRadius: 10,
-                  ),
-                ],
-              ),
-              child: const Icon(
-                Icons.psychology,
-                color: Colors.white,
-                size: 50,
-              ),
-            ),
-            const SizedBox(height: 30),
-            Text(
-              'Welcome to Aniwa AI',
-              style: GoogleFonts.orbitron(
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 40),
-              child: Text(
-                'Your intelligent assistant is ready to help.\nSay "Assist Lens" to start a conversation.',
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 16,
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.7),
-                  height: 1.5,
-                ),
-              ),
-            ),
-            const SizedBox(height: 30),
-            _buildQuickActions(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildQuickActions() {
-    final actions = [
-      {'icon': Icons.help_outline, 'text': 'Ask a question'},
-      {'icon': Icons.navigation, 'text': 'Get directions'},
-      {'icon': Icons.chat, 'text': 'Start chatting'},
-    ];
-
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children:
-          actions.map((action) {
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withOpacity(0.2),
-                ),
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurface.withOpacity(0.05),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    action['icon'] as IconData,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withOpacity(0.7),
-                    size: 16,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    action['text'] as String,
-                    style: GoogleFonts.inter(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withOpacity(0.7),
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
     );
   }
 
@@ -553,8 +455,9 @@ class _AniwaChatPageState extends State<AniwaChatPage>
     String content,
     bool isUser,
     int index,
-    ChatThemeExtension chatTheme,
-  ) {
+    ChatThemeExtension chatTheme, {
+    bool isPartial = false, // Add this parameter
+  }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       child: Row(
@@ -608,7 +511,7 @@ class _AniwaChatPageState extends State<AniwaChatPage>
                       duration: const Duration(milliseconds: 300),
                       child: Text(
                         content,
-                        key: ValueKey('message_$index'),
+                        key: ValueKey('message_${index}_partial_$isPartial'),
                         style: GoogleFonts.inter(
                           fontSize: 16,
                           color:
@@ -645,6 +548,39 @@ class _AniwaChatPageState extends State<AniwaChatPage>
                       ],
                     ],
                   ),
+                  // Show partial indicator for streaming messages
+                  if (isPartial)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                Theme.of(
+                                  context,
+                                ).colorScheme.primary.withOpacity(0.7),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Receiving...',
+                            style: GoogleFonts.inter(
+                              fontSize: 10,
+                              fontStyle: FontStyle.italic,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withOpacity(0.5),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -850,6 +786,31 @@ class _AniwaChatPageState extends State<AniwaChatPage>
     );
   }
 
+  // Override _sendMessage to handle interruption
+  void _sendMessage(ChatState chatState, String message) {
+    if (message.isEmpty) return;
+
+    _textInputController.clear();
+    _textFocusNode.unfocus();
+
+    // Interrupt any ongoing AI speech and restart listening
+    chatState.handleInterruption();
+
+    // The scroll will be triggered by ChatState itself via the callback
+    chatState.addUserMessage(message);
+  }
+
+  // Override _toggleListening to disable mic button during processing
+  void _toggleListening(ChatState chatState) {
+    if (chatState.isProcessingAI) return;
+
+    if (chatState.isListening) {
+      chatState.stopVoiceInput();
+    } else {
+      chatState.startVoiceInput();
+    }
+  }
+
   Widget _buildMicButton(ChatState chatState, ChatThemeExtension chatTheme) {
     return GestureDetector(
       onTap:
@@ -930,17 +891,137 @@ class _AniwaChatPageState extends State<AniwaChatPage>
     );
   }
 
-  void _sendMessage(ChatState chatState, String message) {
+  // Override _sendMessage to handle interruption
+  void _sendMessageWithInterruption(ChatState chatState, String message) {
     if (message.isEmpty) return;
 
     _textInputController.clear();
     _textFocusNode.unfocus();
 
+    // Interrupt any ongoing AI speech and restart listening
+    chatState.handleInterruption();
+
     // The scroll will be triggered by ChatState itself via the callback
     chatState.addUserMessage(message);
   }
 
-  void _toggleListening(ChatState chatState) {
+  Widget _buildEmptyState(ChatThemeExtension chatTheme) {
+    return Center(
+      child: FadeTransition(
+        opacity: _fadeAnimation,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: chatTheme.aiAvatarGradient,
+                boxShadow: [
+                  BoxShadow(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withOpacity(0.3),
+                    blurRadius: 30,
+                    spreadRadius: 10,
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.psychology,
+                color: Colors.white,
+                size: 50,
+              ),
+            ),
+            const SizedBox(height: 30),
+            Text(
+              'Welcome to Aniwa AI',
+              style: GoogleFonts.orbitron(
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 40),
+              child: Text(
+                'Your intelligent assistant is ready to help.\nSay "Assist Lens" to start a conversation.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.7),
+                  height: 1.5,
+                ),
+              ),
+            ),
+            const SizedBox(height: 30),
+            _buildQuickActions(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickActions() {
+    final actions = [
+      {'icon': Icons.help_outline, 'text': 'Ask a question'},
+      {'icon': Icons.navigation, 'text': 'Get directions'},
+      {'icon': Icons.chat, 'text': 'Start chatting'},
+    ];
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children:
+          actions.map((action) {
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withOpacity(0.2),
+                ),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withOpacity(0.05),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    action['icon'] as IconData,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withOpacity(0.7),
+                    size: 16,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    action['text'] as String,
+                    style: GoogleFonts.inter(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withOpacity(0.7),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+    );
+  }
+
+  // Override _toggleListening to disable mic button during processing
+  void _toggleListeningWithProcessingCheck(ChatState chatState) {
+    if (chatState.isProcessingAI) return;
+
     if (chatState.isListening) {
       chatState.stopVoiceInput();
     } else {

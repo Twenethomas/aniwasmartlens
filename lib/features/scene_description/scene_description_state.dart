@@ -27,11 +27,14 @@ class SceneDescriptionState extends ChangeNotifier {
   bool _isProcessing = false;
   String? _errorMessage;
   String? _capturedImagePath; // Path to the temporarily captured image
-  CameraController? _cameraController; // This will hold the controller from CameraService
+  CameraController?
+  _cameraController; // This will hold the controller from CameraService
   bool _isAutoDescribing = false;
 
   // Throttler for live description to prevent excessive API calls
-  final _liveDescriptionThrottler = Throttler(milliseconds: 3000); // 3 seconds throttle
+  final _liveDescriptionThrottler = Throttler(
+    milliseconds: 3000,
+  ); // 3 seconds throttle
 
   SceneDescriptionState(
     this._networkService,
@@ -48,10 +51,11 @@ class SceneDescriptionState extends ChangeNotifier {
   bool get isProcessing => _isProcessing;
   String? get errorMessage => _errorMessage;
   String? get capturedImagePath => _capturedImagePath;
-  CameraController? get cameraController => _cameraController; // Expose the controller
-  bool get isInitialized => _cameraService.isCameraInitialized; // Reflect CameraService's init state
+  CameraController? get cameraController =>
+      _cameraController; // Expose the controller
+  bool get isInitialized =>
+      _cameraService.isCameraInitialized; // Reflect CameraService's init state
   bool get isAutoDescribing => _isAutoDescribing;
-
 
   /// Sets the CameraController received from the CameraService.
   /// This is crucial for the UI to display the preview and for this state
@@ -79,14 +83,16 @@ class SceneDescriptionState extends ChangeNotifier {
     // No need to notifyListeners here as setCameraController already does
   }
 
-
   /// Captures an image and then describes the scene using Gemini.
   Future<void> takePictureAndDescribeScene() async {
     if (_isProcessing) {
-      _logger.w("SceneDescriptionState: Already processing. Ignoring new request.");
+      _logger.w(
+        "SceneDescriptionState: Already processing. Ignoring new request.",
+      );
       return;
     }
-    if (_cameraService.cameraController == null || !_cameraService.cameraController!.value.isInitialized) {
+    if (_cameraService.cameraController == null ||
+        !_cameraService.cameraController!.value.isInitialized) {
       setErrorMessage('Camera is not initialized. Please wait or retry.');
       _logger.e("SceneDescriptionState: Camera not initialized for capture.");
       return;
@@ -111,10 +117,14 @@ class SceneDescriptionState extends ChangeNotifier {
       }
 
       _capturedImagePath = imageFile.path;
-      _logger.i("SceneDescriptionState: Image captured to: $_capturedImagePath");
+      _logger.i(
+        "SceneDescriptionState: Image captured to: $_capturedImagePath",
+      );
 
       // Describe the image using Gemini
-      final description = await _geminiService.describeImage(_capturedImagePath!);
+      final description = await _geminiService.describeImage(
+        _capturedImagePath!,
+      );
       _sceneDescription = description;
       _logger.i("SceneDescriptionState: Scene described successfully.");
       await _speechService.speak(description); // Speak the description aloud
@@ -141,9 +151,12 @@ class SceneDescriptionState extends ChangeNotifier {
       _logger.i("SceneDescriptionState: Auto-description already active.");
       return;
     }
-    if (_cameraService.cameraController == null || !_cameraService.cameraController!.value.isInitialized) {
+    if (_cameraService.cameraController == null ||
+        !_cameraService.cameraController!.value.isInitialized) {
       setErrorMessage('Camera is not initialized for auto-description.');
-      _logger.e("SceneDescriptionState: Camera not initialized for auto-description.");
+      _logger.e(
+        "SceneDescriptionState: Camera not initialized for auto-description.",
+      );
       return;
     }
     _logger.i("SceneDescriptionState: Starting auto-description.");
@@ -160,18 +173,25 @@ class SceneDescriptionState extends ChangeNotifier {
 
   /// Processes a camera image for auto-description, applying a throttler.
   Future<void> _processImageForAutoDescription(CameraImage image) async {
-    if (!_isAutoDescribing || _isProcessing) return; // Don't process if stopped or already busy
+    if (!_isAutoDescribing || _isProcessing) {
+      return; // Don't process if stopped or already busy
+    }
 
     _liveDescriptionThrottler.run(() async {
-      if (!_isAutoDescribing || _isProcessing) return; // Double check inside throttler
+      if (!_isAutoDescribing || _isProcessing) {
+        return; // Double check inside throttler
+      }
 
-      _isProcessing = true; // Set processing flag for this individual description
+      _isProcessing =
+          true; // Set processing flag for this individual description
       notifyListeners(); // Notify UI that processing started
 
       try {
         final path = await _saveImageTemporarily(image);
         if (path == null) {
-          _logger.w("SceneDescriptionState: Could not save image for auto-description.");
+          _logger.w(
+            "SceneDescriptionState: Could not save image for auto-description.",
+          );
           return;
         }
 
@@ -195,16 +215,51 @@ class SceneDescriptionState extends ChangeNotifier {
     });
   }
 
+  // Future<void> sendToChat() async {
+  //   if (_isProcessing) {
+  //     _logger.w(
+  //       "SceneDescriptionState: Already processing. Ignoring new request.",
+  //     );
+  //     return;
+  //   }
+
+  //   if (_sceneDescription!.isEmpty) {
+  //     logger.w(
+  //       "SceneDescriptionState: No Scene text available to send to chat.",
+  //     );
+  //     _speechService.speak("No description available to send to chat.");
+  //     return;
+  //   }
+
+  //   try {
+  //     logger.i(
+  //       "SceneDescriptionState: Sending text to chat: \"$sceneDescription\"",
+  //     );
+  //     _
+  //     _speechService.speak("Text sent to chat successfully.");
+  //   } catch (e, stack) {
+  //     logger.e(
+  //       "TextReaderState: Error sending text to chat: $e",
+  //       error: e,
+  //       stackTrace: stack,
+  //     );
+  //     _setErrorMessage('Failed to send text to chat: ${e.toString()}');
+  //     _speechService.speak("Failed to send text to chat.");
+  //   }
+  // }
 
   /// Stops continuous scene description from the live camera feed.
   Future<void> stopAutoDescription() async {
     if (!_isAutoDescribing) {
-      _logger.i("SceneDescriptionState: Auto-description not active. Nothing to stop.");
+      _logger.i(
+        "SceneDescriptionState: Auto-description not active. Nothing to stop.",
+      );
       return;
     }
     _logger.i("SceneDescriptionState: Stopping auto-description.");
     _isAutoDescribing = false;
-    _liveDescriptionThrottler.dispose(); // Dispose throttler to cancel pending calls
+    _liveDescriptionThrottler
+        .dispose(); // Dispose throttler to cancel pending calls
     await _cameraService.stopImageStream(); // Stop the image stream
     notifyListeners();
   }
@@ -213,7 +268,8 @@ class SceneDescriptionState extends ChangeNotifier {
   Future<String?> _saveImageTemporarily(CameraImage image) async {
     try {
       final directory = await getTemporaryDirectory();
-      final path = '${directory.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final path =
+          '${directory.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
       final file = File(path);
 
       // Convert CameraImage to a format suitable for saving (e.g., JPEG).
@@ -223,14 +279,15 @@ class SceneDescriptionState extends ChangeNotifier {
       // IMPORTANT: For production, you'll need a proper image conversion here
       // (e.g., using 'image' package to encode to JPEG, or native platform code).
       await file.writeAsBytes(image.planes[0].bytes);
-      _logger.d("SceneDescriptionState: Temp image saved to: $path (Warning: may not be valid JPEG)");
+      _logger.d(
+        "SceneDescriptionState: Temp image saved to: $path (Warning: may not be valid JPEG)",
+      );
       return path;
     } catch (e) {
       _logger.e("SceneDescriptionState: Failed to save temporary image: $e");
       return null;
     }
   }
-
 
   /// Speaks the current scene description aloud.
   Future<void> speakDescription() async {
@@ -261,7 +318,6 @@ class SceneDescriptionState extends ChangeNotifier {
       // Or, if ChatState provides a callback to add messages:
       // chatService.onAddAssistantMessage("Scene Description: \"$_sceneDescription\"");
       _speechService.speak("Scene description sent to chat successfully.");
-
     } catch (e, stack) {
       _logger.e(
         "SceneDescriptionState: Error sending description to chat: $e",
@@ -282,7 +338,8 @@ class SceneDescriptionState extends ChangeNotifier {
     _isProcessing = false;
     _isAutoDescribing = false;
     _speechService.stopSpeaking();
-    _liveDescriptionThrottler.dispose(); // Ensure throttler is disposed on clear
+    _liveDescriptionThrottler
+        .dispose(); // Ensure throttler is disposed on clear
     notifyListeners();
     // No need to resume camera here, as it's typically handled by initCamera on re-entry or auto-describe.
   }
@@ -295,7 +352,6 @@ class SceneDescriptionState extends ChangeNotifier {
       notifyListeners();
     }
   }
-
 
   @override
   void dispose() {

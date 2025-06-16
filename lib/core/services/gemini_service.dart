@@ -42,10 +42,9 @@ class GeminiService {
     Map<String, dynamic>? generationConfig,
     String? modelId, // Allow overriding the model ID
   }) async {
-    if (!_networkService.isOnline) {
-      _logger.e("GeminiService: No internet connection for Gemini API call.");
-      throw Exception("No internet connection.");
-    }
+    const int maxRetries = 3;
+    int retryCount = 0;
+    int delaySeconds = 2;
 
     if (chatHistory.isEmpty) {
       _logger.e(
@@ -66,64 +65,77 @@ class GeminiService {
       payload['generationConfig'] = generationConfig;
     }
 
-    try {
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode(payload),
-      );
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> jsonResponse = json.decode(response.body);
-        _logger.d("GeminiService: Raw API response: $jsonResponse");
-
-        if (jsonResponse.containsKey('candidates') &&
-            jsonResponse['candidates'] is List &&
-            jsonResponse['candidates'].isNotEmpty &&
-            jsonResponse['candidates'][0].containsKey('content') &&
-            jsonResponse['candidates'][0]['content'].containsKey('parts') &&
-            jsonResponse['candidates'][0]['content']['parts'] is List &&
-            jsonResponse['candidates'][0]['content']['parts'].isNotEmpty) {
-          final firstPart =
-              jsonResponse['candidates'][0]['content']['parts'][0];
-          if (firstPart.containsKey('text')) {
-            String rawText = firstPart['text'];
-            // If a schema was used and mimeType was application/json, parse the stringified JSON
-            if (generationConfig != null &&
-                generationConfig['responseMimeType'] == 'application/json') {
-              try {
-                // Return the parsed JSON as a string, or you could return Map<String, dynamic>
-                // and handle it in ChatService. For simplicity in current flow, return string.
-                // ChatService will parse it from string to map.
-                return rawText; // The rawText will be the JSON string from Gemini
-              } catch (e) {
-                _logger.e(
-                  "GeminiService: Failed to parse JSON response: $rawText, Error: $e",
-                );
-                return rawText; // Fallback to raw text if JSON parsing fails
-              }
-            }
-            return rawText; // Return raw text if no JSON schema was requested
-          }
-        }
-        _logger.e(
-          "GeminiService: Unexpected API response structure or missing text content: $jsonResponse",
-        );
-        throw Exception(
-          "Failed to parse AI response: Unexpected structure or missing text.",
-        );
-      } else {
-        _logger.e(
-          "GeminiService: API call failed with status ${response.statusCode}: ${response.body}",
-        );
-        throw Exception(
-          "Gemini API error: ${response.statusCode} - ${response.body}",
-        );
+    while (retryCount < maxRetries) {
+      if (!_networkService.isOnline) {
+        _logger.e("GeminiService: No internet connection for Gemini API call.");
+        throw Exception("No internet connection.");
       }
-    } catch (e) {
-      _logger.e("GeminiService: Error during API request: $e");
-      throw Exception("Failed to get response from Gemini API: $e");
+
+      try {
+        final response = await http.post(
+          Uri.parse(url),
+          headers: {'Content-Type': 'application/json'},
+          body: json.encode(payload),
+        );
+
+        if (response.statusCode == 200) {
+          final Map<String, dynamic> jsonResponse = json.decode(response.body);
+          _logger.d("GeminiService: Raw API response: $jsonResponse");
+
+          if (jsonResponse.containsKey('candidates') &&
+              jsonResponse['candidates'] is List &&
+              jsonResponse['candidates'].isNotEmpty &&
+              jsonResponse['candidates'][0].containsKey('content') &&
+              jsonResponse['candidates'][0]['content'].containsKey('parts') &&
+              jsonResponse['candidates'][0]['content']['parts'] is List &&
+              jsonResponse['candidates'][0]['content']['parts'].isNotEmpty) {
+            final firstPart =
+                jsonResponse['candidates'][0]['content']['parts'][0];
+            if (firstPart.containsKey('text')) {
+              String rawText = firstPart['text'];
+              // If a schema was used and mimeType was application/json, parse the stringified JSON
+              if (generationConfig != null &&
+                  generationConfig['responseMimeType'] == 'application/json') {
+                try {
+                  // Return the parsed JSON as a string, or you could return Map<String, dynamic>
+                  // and handle it in ChatService. For simplicity in current flow, return string.
+                  // ChatService will parse it from string to map.
+                  return rawText; // The rawText will be the JSON string from Gemini
+                } catch (e) {
+                  _logger.e(
+                    "GeminiService: Failed to parse JSON response: $rawText, Error: $e",
+                  );
+                  return rawText; // Fallback to raw text if JSON parsing fails
+                }
+              }
+              return rawText; // Return raw text if no JSON schema was requested
+            }
+          }
+          _logger.e(
+            "GeminiService: Unexpected API response structure or missing text content: $jsonResponse",
+          );
+          throw Exception(
+            "Failed to parse AI response: Unexpected structure or missing text.",
+          );
+        } else {
+          _logger.e(
+            "GeminiService: API call failed with status ${response.statusCode}: ${response.body}",
+          );
+          throw Exception(
+            "Gemini API error: ${response.statusCode} - ${response.body}",
+          );
+        }
+      } catch (e) {
+        retryCount++;
+        _logger.e("GeminiService: Error during API request: $e. Retry $retryCount/$maxRetries");
+        if (retryCount >= maxRetries) {
+          throw Exception("Failed to get response from Gemini API after $maxRetries attempts: $e");
+        }
+        await Future.delayed(Duration(seconds: delaySeconds));
+        delaySeconds *= 2; // Exponential backoff
+      }
     }
+    throw Exception("Failed to get response from Gemini API after $maxRetries attempts.");
   }
 
   /// Corrects OCR errors in the given text using the GPT model.

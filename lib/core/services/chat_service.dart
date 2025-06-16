@@ -37,7 +37,6 @@ class ChatService {
   final Function(String content) onAddUserMessage; // NEW: Callback to add user message to ChatState
   final Function(String content) onAddAssistantMessage; // NEW: Callback to add assistant message to ChatState
 
-
   // Processing state
   bool _isProcessingCommand = false;
   String? _lastProcessedCommand;

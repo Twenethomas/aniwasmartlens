@@ -7,6 +7,7 @@ import 'dart:ui';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:image/image.dart' as img_lib; // Alias for the 'image' package
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart'; // For Face object
+import 'package:assist_lens/core/services/face_database_helper.dart'; // Import Database Helper
 import 'package:logger/logger.dart'; // Import logger
 
 // This class handles loading and running the TFLite model for face recognition,
@@ -16,26 +17,33 @@ class FaceRecognizerService {
   // MobileFaceNet typically expects 112x112 input image
   final int _inputImageSize = 112;
   final Logger _logger = Logger();
+  late final FaceDatabaseHelper _faceDatabaseHelper; // Database helper instance
 
   // In-memory storage for known faces: Map of name to their embedding
   final Map<String, Float32List> _knownFaces = {};
 
+  // Public getter for known faces (read-only copy)
+  Map<String, Float32List> get knownFaces => Map.unmodifiable(_knownFaces);
+
   // Threshold for recognizing faces. Lower values mean stricter match.
   // This value often needs empirical tuning for your specific model and dataset.
   // For MobileFaceNet, a distance below 1.0-1.2 is often considered a match.
-  static const double _recognitionThreshold = 1.0;
+  static const double _recognitionThreshold = 1.4;
 
   // Private constructor for singleton pattern
-  FaceRecognizerService._privateConstructor() {
-    loadModel();
+  FaceRecognizerService._privateConstructor(this._faceDatabaseHelper) {
+    _initializeService();
   }
 
   // Singleton instance
-  static final FaceRecognizerService _instance = FaceRecognizerService._privateConstructor();
+  static FaceRecognizerService? _instance;
 
   // Factory constructor to return the singleton instance
-  factory FaceRecognizerService() {
-    return _instance;
+  factory FaceRecognizerService({FaceDatabaseHelper? faceDatabaseHelper}) {
+    // Ensure _faceDatabaseHelper is initialized if not already
+    _instance ??= FaceRecognizerService._privateConstructor(
+        faceDatabaseHelper ?? FaceDatabaseHelper());
+    return _instance!;
   }
 
   /// Loads the MobileFaceNet TFLite model from assets.
@@ -52,6 +60,12 @@ class FaceRecognizerService {
     } catch (e) {
       _logger.e('FaceRecognizerService: Failed to load MobileFaceNet model: $e');
     }
+  }
+
+  /// Initializes the service by loading the model and known faces from DB.
+  Future<void> _initializeService() async {
+    await loadModel();
+    await loadFacesFromDatabase();
   }
 
   /// Extracts face embedding from an InputImage given a detected face bounding box.
@@ -221,9 +235,14 @@ class FaceRecognizerService {
   /// For now, this stores the face in an in-memory map.
   Future<void> registerFace(String name, Face face, InputImage inputImage) async {
     _logger.i('FaceRecognizerService: Registering face for: $name');
+    if (name.trim().isEmpty) {
+      _logger.e('FaceRecognizerService: Face name cannot be empty.');
+      throw Exception('Face name cannot be empty.');
+    }
     final Float32List? embedding = await getFaceEmbedding(inputImage, face);
     if (embedding != null) {
       _knownFaces[name] = embedding;
+      await _faceDatabaseHelper.insertFace(name, embedding); // Save to DB
       _logger.i('FaceRecognizerService: Face for "$name" registered successfully.');
     } else {
       _logger.e('FaceRecognizerService: Failed to get embedding for "$name". Face not registered.');
@@ -234,6 +253,10 @@ class FaceRecognizerService {
   /// Recognizes a face by comparing its embedding to known faces.
   /// Returns the name of the recognized person or null if no match is found.
   Future<String?> recognizeFace(Face face, InputImage inputImage) async {
+    // Ensure faces are loaded from DB if in-memory is empty (e.g., after app restart)
+    if (_knownFaces.isEmpty) {
+      await loadFacesFromDatabase();
+    }
     if (_knownFaces.isEmpty) {
       _logger.i('FaceRecognizerService: No known faces to recognize against.');
       return null;
@@ -284,11 +307,30 @@ class FaceRecognizerService {
     return sqrt(sumOfSquares);
   }
 
+  /// Loads known faces from the database into the in-memory map.
+  Future<void> loadFacesFromDatabase() async {
+    _logger.i('FaceRecognizerService: Loading known faces from database...');
+    try {
+      final facesFromDb = await _faceDatabaseHelper.getKnownFaces();
+      _knownFaces.clear(); // Clear existing in-memory faces
+      _knownFaces.addAll(facesFromDb);
+      _logger.i('FaceRecognizerService: Loaded ${_knownFaces.length} faces from database.');
+    } catch (e) {
+      _logger.e('FaceRecognizerService: Error loading faces from database: $e');
+    }
+  }
+
   /// Disposes the TFLite interpreter and cleans up resources.
   void dispose() {
     _logger.i('FaceRecognizerService: Disposing interpreter.');
     _interpreter?.close();
     _interpreter = null;
-    _knownFaces.clear(); // Clear in-memory cache
+    // _knownFaces.clear(); // Clearing here might be premature if service is reused.
+  }
+
+  /// Allows setting the database helper after initial construction if necessary.
+  /// Primarily for scenarios where the helper might not be available at the exact moment of singleton creation.
+  void setDatabaseHelper(FaceDatabaseHelper helper) {
+    _faceDatabaseHelper = helper;
   }
 }

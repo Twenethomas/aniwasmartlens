@@ -1,6 +1,5 @@
 // lib/features/profile/profile_page.dart
 import 'package:assist_lens/core/routing/app_router.dart';
-import 'package:assist_lens/main.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -60,84 +59,85 @@ class ProfilePage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 30),
-                ListTile(
-                  leading: Icon(
-                    Icons.settings_rounded,
-                    color: colorScheme.onSurface,
-                  ),
-                  title: Text(
-                    'Settings',
-                    style: textTheme.bodyLarge?.copyWith(
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  trailing: Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    color: colorScheme.onSurface.withOpacity(0.5),
-                  ),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Settings page coming soon!')),
-                    );
-                  },
-                ),
-                const Divider(),
-                ListTile(
-                  leading: Icon(
-                    Icons.info_rounded,
-                    color: colorScheme.onSurface,
-                  ),
-                  title: Text(
-                    'About App',
-                    style: textTheme.bodyLarge?.copyWith(
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  trailing: Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    color: colorScheme.onSurface.withOpacity(0.5),
-                  ),
-                  onTap: () {
-                    showAboutDialog(
-                      context: context,
-                      applicationName: 'Assist Lens',
-                      applicationVersion: '1.0.0',
-                      applicationLegalese:
-                          '© 2024 Assist Lens. All rights reserved.',
-                      children: [
-                        Text(
-                          'Assist Lens is your personal AI companion designed to enhance independence.',
-                          style: textTheme.bodyMedium?.copyWith(
-                            color: colorScheme.onSurface,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const Divider(),
-                ListTile(
-                  leading: Icon(
-                    Icons.brightness_6_rounded,
-                    color: colorScheme.onSurface,
-                  ),
-                  title: Text(
-                    'Toggle Theme',
-                    style: textTheme.bodyLarge?.copyWith(
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  trailing: Switch(
-                    value: Theme.of(context).brightness == Brightness.dark,
-                    onChanged: (value) {
-                      ThemeProvider.of(context).toggleTheme();
-                    },
-                    activeColor: colorScheme.primary,
-                  ),
-                  onTap: () {
-                    ThemeProvider.of(context).toggleTheme();
-                  },
-                ),
+                // ListTile(
+                //   leading: Icon(
+                //     Icons.settings_rounded,
+                //     color: colorScheme.onSurface,
+                //   ),
+                //   title: Text(
+                //     'Settings',
+                //     style: textTheme.bodyLarge?.copyWith(
+                //       color: colorScheme.onSurface,
+                //     ),
+                //   ),
+                //   trailing: Icon(
+                //     Icons.arrow_forward_ios_rounded,
+                //     color: colorScheme.onSurface.withOpacity(0.5),
+                //   ),
+                //   onTap: () {
+                //     super.key;
+                //     // ScaffoldMessenger.of(context).showSnackBar(
+                //     //   SnackBar(content: Text('Settings page coming soon!')),
+                //     // );
+                //   },
+                // ),
+                // const Divider(),
+                // ListTile(
+                //   leading: Icon(
+                //     Icons.info_rounded,
+                //     color: colorScheme.onSurface,
+                //   ),
+                //   title: Text(
+                //     'About App',
+                //     style: textTheme.bodyLarge?.copyWith(
+                //       color: colorScheme.onSurface,
+                //     ),
+                //   ),
+                //   trailing: Icon(
+                //     Icons.arrow_forward_ios_rounded,
+                //     color: colorScheme.onSurface.withOpacity(0.5),
+                //   ),
+                //   onTap: () {
+                //     showAboutDialog(
+                //       context: context,
+                //       applicationName: 'Assist Lens',
+                //       applicationVersion: '1.0.0',
+                //       applicationLegalese:
+                //           '© 2024 Assist Lens. All rights reserved.',
+                //       children: [
+                //         Text(
+                //           'Assist Lens is your personal AI companion designed to enhance independence.',
+                //           style: textTheme.bodyMedium?.copyWith(
+                //             color: colorScheme.onSurface,
+                //           ),
+                //         ),
+                //       ],
+                //     );
+                //   },
+                // ),
+                // const Divider(),
+                // ListTile(
+                //   leading: Icon(
+                //     Icons.brightness_6_rounded,
+                //     color: colorScheme.onSurface,
+                //   ),
+                //   title: Text(
+                //     'Toggle Theme',
+                //     style: textTheme.bodyLarge?.copyWith(
+                //       color: colorScheme.onSurface,
+                //     ),
+                //   ),
+                //   trailing: Switch(
+                //     value: Theme.of(context).brightness == Brightness.dark,
+                //     onChanged: (value) {
+                //       ThemeProvider.of(context).toggleTheme();
+                //     },
+                //     activeColor: colorScheme.primary,
+                //   ),
+                //   onTap: () {
+                //     ThemeProvider.of(context).toggleTheme();
+                //   },
+                // ),
                 const Spacer(),
                 ElevatedButton.icon(
                   onPressed: () {

@@ -7,9 +7,17 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/foundation.dart';
 import 'package:porcupine_flutter/porcupine_manager.dart';
 import 'package:porcupine_flutter/porcupine_error.dart'; // Add this import
- // Ensure this is also imported for PorcupineException
+// Ensure this is also imported for PorcupineException
 
 import '../../main.dart'; // For global logger
+
+/// Custom exception for Porcupine initialization failures.
+class PorcupineInitializationException implements Exception {
+  final String message;
+  PorcupineInitializationException(this.message);
+  @override
+  String toString() => "PorcupineInitializationException: $message";
+}
 
 class SpeechService extends ChangeNotifier {
   late FlutterTts _flutterTts;
@@ -30,12 +38,12 @@ class SpeechService extends ChangeNotifier {
   String _finalRecognizedText = '';
   Timer? _sttTimeoutTimer;
   Timer? _silenceTimer;
-  DateTime? _lastSpeechTime; // Kept for potential future use in silence detection
+  DateTime?
+  _lastSpeechTime; // Kept for potential future use in silence detection
   // New: Flag to indicate if STT was started manually (e.g., via mic button)
   bool _manualSttStart = false;
   // Public getter for manualSttStart
   bool get manualSttStart => _manualSttStart;
-
 
   // Wake Word State
   bool _isWakeWordListening = false;
@@ -52,8 +60,11 @@ class SpeechService extends ChangeNotifier {
 
   // Microphone management
   bool _microphoneInUse = false;
-  Timer? _microphoneReleaseTimer;
-  static const Duration _microphoneReleaseDelay = Duration(milliseconds: 1500);
+  Completer<void>?
+  _microphoneReleaseCompleter; // Use a Completer for explicit release signal
+  static const Duration _microphoneReleaseDelay = Duration(
+    milliseconds: 2000,
+  ); // Increased delay
 
   // Configuration for improved listening
   static const Duration _maxSilenceDuration = Duration(
@@ -63,7 +74,7 @@ class SpeechService extends ChangeNotifier {
     minutes: 2,
   ); // Longer total listening time
   static const Duration _minPauseBetweenWords = Duration(
-    seconds: 4,
+    seconds: 6,
   ); // Adjusted pause tolerance
 
   // Streams for external listeners
@@ -137,32 +148,40 @@ class SpeechService extends ChangeNotifier {
     _logger.d("Microphone: ${inUse ? 'Acquired' : 'Released'} by $component");
 
     if (!inUse) {
-      // Cancel any existing release timer
-      _microphoneReleaseTimer?.cancel();
-
-      // Set a delay before allowing other components to use microphone
-      _microphoneReleaseTimer = Timer(_microphoneReleaseDelay, () {
-        _logger.d(
-          "Microphone: Release delay completed, microphone fully available",
-        );
+      // Microphone is being released. Start a timer and create a completer.
+      _microphoneReleaseCompleter = Completer<void>();
+      Timer(_microphoneReleaseDelay, () {
+        if (!(_microphoneReleaseCompleter?.isCompleted ?? true)) {
+          _microphoneReleaseCompleter?.complete();
+          _logger.d(
+            "Microphone: Release delay completed, microphone fully available",
+          );
+        }
       });
     } else {
-      // Cancel release timer if microphone is being used again
-      _microphoneReleaseTimer?.cancel();
+      // Microphone is being acquired. If a release completer exists and is not completed, complete it.
+      if (!(_microphoneReleaseCompleter?.isCompleted ?? true)) {
+        _microphoneReleaseCompleter
+            ?.complete(); // Force complete if mic is re-acquired
+        _logger.d(
+          "Microphone: Acquisition interrupted pending release, forced completer.",
+        );
+      }
+      _microphoneReleaseCompleter = null; // Clear completer
     }
   }
 
   Future<void> _waitForMicrophoneRelease() async {
-    if (_microphoneInUse || _microphoneReleaseTimer?.isActive == true) {
+    if (_microphoneInUse ||
+        (_microphoneReleaseCompleter?.isCompleted == false)) {
       _logger.d("Microphone: Waiting for microphone to be fully released...");
-
-      // Wait for current release timer to complete if it's active
-      if (_microphoneReleaseTimer?.isActive == true) {
-        await Future.delayed(_microphoneReleaseDelay);
+      // If there's an active release process, wait for it to complete.
+      if (_microphoneReleaseCompleter?.isCompleted == false) {
+        await _microphoneReleaseCompleter!.future;
       }
-
-      // Additional safety delay after the timer completes (or if it wasn't active)
-      await Future.delayed(const Duration(milliseconds: 100)); // Reduced for slightly faster response
+      // Add a small extra delay to be absolutely safe after the completer,
+      // or if it was already released but we want a small buffer.
+      await Future.delayed(const Duration(milliseconds: 200));
       _microphoneInUse = false; // Explicitly set to false after waiting
       _logger.d("Microphone: Confirmed fully released after wait.");
     }
@@ -187,6 +206,7 @@ class SpeechService extends ChangeNotifier {
       _speakingText = '';
       _speakingStatusController.add(false);
       _logger.d("TTS: Finished speaking.");
+      _setMicrophoneInUse(false, "TTS completion"); // Release microphone
       notifyListeners();
       // After speaking finishes, we might want to automatically listen for follow-up
       // This logic will be handled by ChatState based on this status change.
@@ -197,6 +217,7 @@ class SpeechService extends ChangeNotifier {
       _speakingText = '';
       _speakingStatusController.add(false);
       _logger.e("TTS: Error occurred: $msg");
+      _setMicrophoneInUse(false, "TTS error"); // Release microphone on error
       notifyListeners();
     });
 
@@ -217,9 +238,27 @@ class SpeechService extends ChangeNotifier {
       return;
     }
 
+    // Stop STT before speaking to avoid microphone conflict
+    if (_isListeningStt) {
+      _logger.i("TTS: Stopping STT before speaking to acquire microphone.");
+      await stopListening();
+    }
+    // Stop wake word listening before speaking if it's active
+    if (_isWakeWordListening) {
+      _logger.i(
+        "TTS: Stopping wake word before speaking to acquire microphone.",
+      );
+      await stopWakeWordListening();
+    }
+    await _waitForMicrophoneRelease(); // Ensure microphone is free before trying to speak
+
     if (_isSpeaking) {
       await _flutterTts.stop();
       _logger.d("TTS: Stopped previous speech to speak new text.");
+      _setMicrophoneInUse(
+        false,
+        "TTS stop before new speech",
+      ); // Ensure mic is released from prior TTS
     }
 
     _speakingText = text;
@@ -227,12 +266,17 @@ class SpeechService extends ChangeNotifier {
     _logger.i("TTS: Speaking: '$text'");
 
     try {
+      _setMicrophoneInUse(true, "TTS"); // Acquire microphone for TTS
       await _flutterTts.speak(text);
     } catch (e) {
       _logger.e("TTS: Error during speech: $e");
       _isSpeaking = false;
       _speakingText = '';
       _speakingStatusController.add(false);
+      _setMicrophoneInUse(
+        false,
+        "TTS speech error",
+      ); // Release microphone on error
       notifyListeners();
     }
   }
@@ -244,6 +288,7 @@ class SpeechService extends ChangeNotifier {
       _speakingText = '';
       _speakingStatusController.add(false);
       _logger.i("TTS: Speech stopped by command.");
+      _setMicrophoneInUse(false, "TTS stop command"); // Release microphone
       notifyListeners();
     }
   }
@@ -304,11 +349,11 @@ class SpeechService extends ChangeNotifier {
         if (status == stt.SpeechToText.listeningStatus) {
           _isListeningStt = true;
           _lastSpeechTime = DateTime.now();
-          _setMicrophoneInUse(true, "STT");
+          _setMicrophoneInUse(true, "STT"); // Acquire microphone for STT
         } else if (status == stt.SpeechToText.notListeningStatus ||
             status == stt.SpeechToText.doneStatus) {
           _isListeningStt = false;
-          _setMicrophoneInUse(false, "STT");
+          _setMicrophoneInUse(false, "STT"); // Release microphone
           _sttTimeoutTimer?.cancel();
           _silenceTimer?.cancel();
 
@@ -339,7 +384,7 @@ class SpeechService extends ChangeNotifier {
           "STT: Error: ${errorNotification.errorMsg} (Type: ${errorNotification.runtimeType})",
         );
         _isListeningStt = false;
-        _setMicrophoneInUse(false, "STT");
+        _setMicrophoneInUse(false, "STT error"); // Release microphone on error
         _listeningStatusController.add(false);
         _sttTimeoutTimer?.cancel();
         _silenceTimer?.cancel();
@@ -395,22 +440,18 @@ class SpeechService extends ChangeNotifier {
 
     // --- CRITICAL CHANGE HERE ---
     // Ensure microphone is fully released before attempting to start STT.
-    // This handles the delay from previous microphone usage (e.g., Porcupine).
     await _waitForMicrophoneRelease();
 
     // If wake word detection was active, stop it here.
-    // This check is now robust because _waitForMicrophoneRelease ensures mic is free BEFORE attempting this.
-    // The previous redundant _waitForMicrophoneRelease call inside this block is removed.
     if (_isWakeWordListening) {
       _logger.i("STT: Stopping wake word detection before STT");
-      await stopWakeWordListening(); // This will release the microphone, but we've already waited above.
-      // No need for another await _waitForMicrophoneRelease() here.
+      await stopWakeWordListening();
     }
 
     if (_isListeningStt) {
       _logger.w("STT: Already listening. Stopping current session first.");
       await stopListening();
-      await Future.delayed(const Duration(milliseconds: 300));
+      await Future.delayed(const Duration(milliseconds: 300)); // Small buffer
     }
 
     // Clear previous results before starting a new session
@@ -454,7 +495,9 @@ class SpeechService extends ChangeNotifier {
         },
         listenFor: actualListenFor,
         pauseFor: actualPauseFor,
-        listenOptions: stt.SpeechListenOptions(partialResults: true), // Use options
+        listenOptions: stt.SpeechListenOptions(
+          partialResults: true,
+        ), // Use options
         localeId: "en_US",
         onSoundLevelChange: (level) {
           // Reset silence timer on significant sound detection
@@ -489,7 +532,10 @@ class SpeechService extends ChangeNotifier {
     } catch (e) {
       _logger.e("STT: Error starting listening: $e");
       _isListeningStt = false;
-      _setMicrophoneInUse(false, "STT");
+      _setMicrophoneInUse(
+        false,
+        "STT start error",
+      ); // Release microphone on error
       _listeningStatusController.add(false);
       // Explicitly send empty final text on start error if nothing was recognized
       if (_finalRecognizedText.isEmpty) {
@@ -497,7 +543,25 @@ class SpeechService extends ChangeNotifier {
       }
       notifyListeners();
     }
-  }               
+  }
+
+  /// Force preempt microphone from wake word detection immediately.
+  /// Stops wake word listening and releases microphone without delay.
+  Future<void> forcePreemptMicrophoneFromWakeWord() async {
+    if (_isWakeWordListening) {
+      _logger.i("Mic Preempt: Forcing stop of wake word listening.");
+      await stopWakeWordListening();
+      // Immediately release microphone without delay
+      _microphoneInUse = false;
+      if (!(_microphoneReleaseCompleter?.isCompleted ?? true)) {
+        _microphoneReleaseCompleter?.complete();
+      }
+      _logger.i(
+        "Mic Preempt: Microphone released immediately after preemption.",
+      );
+      notifyListeners();
+    }
+  }
 
   void _startSilenceTimer() {
     _silenceTimer?.cancel();
@@ -543,7 +607,10 @@ class SpeechService extends ChangeNotifier {
     }
   }
 
-  Future<void> startExtendedListening({Duration? maxDuration}) async {
+  Future<void> startExtendedListening({
+    Duration? maxDuration,
+    bool manualStart = false,
+  }) async {
     final duration = maxDuration ?? const Duration(minutes: 5);
     await startListening(
       continuous: true, // Use continuous mode to allow for longer sessions
@@ -551,7 +618,7 @@ class SpeechService extends ChangeNotifier {
       pauseFor: const Duration(
         seconds: 4,
       ), // Allow reasonable pauses within continuous session
-      manualStart: false, // This is usually triggered by wake word or AI speaking
+      manualStart: manualStart, // Propagate manualStart
     );
   }
 
@@ -566,6 +633,10 @@ class SpeechService extends ChangeNotifier {
         notifyListeners();
       } catch (e) {
         _logger.e("STT: Error stopping listening: $e");
+        _setMicrophoneInUse(
+          false,
+          "STT stop error",
+        ); // Ensure mic is released on error
       }
     }
   }
@@ -586,7 +657,8 @@ class SpeechService extends ChangeNotifier {
       );
       return;
     }
-    if (_porcupineInitializationFailed && _porcupineRetryCount >= _maxPorcupineRetries) {
+    if (_porcupineInitializationFailed &&
+        _porcupineRetryCount >= _maxPorcupineRetries) {
       _logger.e(
         "Wake Word: Max retries exceeded. Wake word detection disabled.",
       );
@@ -609,6 +681,7 @@ class SpeechService extends ChangeNotifier {
         _isPorcupineInitializing = false;
         _isWakeWordListening = false;
         _wakeWordListeningController.add(false);
+        _setMicrophoneInUse(false, "Porcupine init no perm");
         notifyListeners();
         return;
       }
@@ -693,7 +766,8 @@ class SpeechService extends ChangeNotifier {
       _logger.e(
         "Wake Word: Max initialization retries reached. Wake word detection permanently disabled.",
       );
-      // Potentially set an error message in UI or notify ChatState
+      throw PorcupineInitializationException(
+          "Max retries reached for Porcupine initialization. Error: $error");
     }
   }
 
@@ -702,7 +776,8 @@ class SpeechService extends ChangeNotifier {
     _isWakeWordListening = false;
     _wakeWordListeningController.add(false);
     _setMicrophoneInUse(false, "Porcupine runtime error");
-    _porcupineInitializationFailed = true; // Consider runtime errors as a failure for fallback
+    _porcupineInitializationFailed =
+        true; // Consider runtime errors as a failure for fallback
     notifyListeners();
     // Attempt to recover by reinitializing or inform ChatState to switch modes
     _logger.i("Wake Word: Attempting to reinitialize after runtime error...");
@@ -727,7 +802,7 @@ class SpeechService extends ChangeNotifier {
     // Stop Porcupine listening immediately when wake word is detected
     // This releases the microphone from Porcupine.
     stopWakeWordListening()
-        .then((_) async {
+        .then((_) {
           _logger.i(
             "Wake Word: Porcupine stopped after detection. ChatState will now handle STT.",
           );
@@ -750,7 +825,7 @@ class SpeechService extends ChangeNotifier {
       if (_porcupineManager != null) {
         _logger.i("Wake Word: Starting listening...");
         try {
-          await _waitForMicrophoneRelease();
+          await _waitForMicrophoneRelease(); // Ensure microphone is free
           await _porcupineManager!.start();
           _isWakeWordListening = true;
           _setMicrophoneInUse(true, "Porcupine");
@@ -759,7 +834,9 @@ class SpeechService extends ChangeNotifier {
         } catch (e) {
           _logger.e("Wake Word: Error starting Porcupine listening: $e");
           _handlePorcupineRuntimeError(
-            PorcupineException("Failed to start listening: $e"), // Use PorcupineException
+            PorcupineException(
+              "Failed to start listening: $e",
+            ), // Use PorcupineException
           );
         }
       } else {
@@ -773,7 +850,9 @@ class SpeechService extends ChangeNotifier {
         "Wake Word: Cannot start listening, Porcupine initialization failed permanently.",
       );
     } else if (_isPorcupineInitializing) {
-      _logger.w("Wake Word: Cannot start listening, Porcupine is initializing.");
+      _logger.w(
+        "Wake Word: Cannot start listening, Porcupine is initializing.",
+      );
     } else {
       _logger.d("Wake Word: Already listening for wake word.");
     }
@@ -833,6 +912,7 @@ class SpeechService extends ChangeNotifier {
 
     // Reset all state
     _microphoneInUse = false;
+    _microphoneReleaseCompleter = null; // Ensure completer is reset
     _porcupineInitializationFailed = false;
     _porcupineRetryCount = 0;
     _manualSttStart = false; // Reset manual start flag
@@ -869,7 +949,8 @@ class SpeechService extends ChangeNotifier {
       'wake_word_healthy':
           (_porcupineManager != null && !_porcupineInitializationFailed) ||
           _isWakeWordListening,
-      'microphone_available': _speechToText.isAvailable, // Basic check for mic availability
+      'microphone_available':
+          _speechToText.isAvailable, // Basic check for mic availability
     };
   }
 

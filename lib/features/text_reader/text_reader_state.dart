@@ -294,9 +294,7 @@ class TextReaderState extends ChangeNotifier {
   /// Disposes the camera controller and stops any active streams.
   // Now delegates to CameraService
   Future<void> disposeCamera() async {
-    logger.i(
-      "TextReaderState: Requesting camera disposal from CameraService.",
-    );
+    logger.i("TextReaderState: Requesting camera disposal from CameraService.");
     _liveDetectionDebounceTimer?.cancel();
     _textInViewFeedbackTimer?.cancel();
     await _cameraService.disposeCamera(); // Delegate disposal
@@ -475,32 +473,45 @@ class TextReaderState extends ChangeNotifier {
 
       _setCapturedImagePath(file.path);
       _setMode(TextReaderMode.capturedText); // Switch to captured text mode
+      final InputImage inputImage = InputImage.fromFilePath(file.path);
 
       if (!_networkService.isOnline) {
-        _setErrorMessage("Offline. Cannot process image.");
-        _speechService.speak("Unable to process image while offline.");
-        return;
-      }
+        logger.i("TextReaderState: Processing captured image: ${file.path}");
+        final RecognizedText recognizedTextMlKit = await _textRecognizer
+            .processImage(inputImage);
 
-      logger.i("TextReaderState: Processing captured image: ${file.path}");
-      final InputImage inputImage = InputImage.fromFilePath(file.path);
-      final RecognizedText recognizedTextMlKit = await _textRecognizer
-          .processImage(inputImage);
-
-      if (recognizedTextMlKit.text.isEmpty) {
-        _setErrorMessage("No text detected in the captured image.");
-        _speechService.speak("No text detected in the image.");
+        if (recognizedTextMlKit.text.isEmpty) {
+          _setErrorMessage("No text detected in the captured image.");
+          _speechService.speak("No text detected in the image.");
+        } else {
+          _setRecognizedText(recognizedTextMlKit.text);
+          _setDetectedLanguage(
+            recognizedTextMlKit.blocks.isNotEmpty
+                ? recognizedTextMlKit.blocks.first.recognizedLanguages.first
+                : 'Unknown',
+          );
+          _speechService.speak(
+            "Text captured. Press speak, correct, or translate.",
+          );
+        }
       } else {
-        _setRecognizedText(recognizedTextMlKit.text);
-        _setDetectedLanguage(
-          recognizedTextMlKit.blocks.isNotEmpty
-              ? recognizedTextMlKit.blocks.first.recognizedLanguages
-                  .first
-              : 'Unknown',
-        );
-        _speechService.speak(
-          "Text captured. Press speak, correct, or translate.",
-        );
+        logger.i("TextReaderState: AI Processing captured image: ${file.path}");
+        // Assuming extractTextFromImage returns String? (null if no text or error, or empty string)
+        final String? recognizedTextAiText = await _geminiService
+            .extractTextFromImage(file.path);
+
+        if (recognizedTextAiText != null && recognizedTextAiText.isNotEmpty) {
+          _setRecognizedText(recognizedTextAiText);
+          final String detectedLanguageByAi = await _geminiService
+              .detectLanguage(recognizedTextAiText); // Pass the non-null, non-empty string
+          _setDetectedLanguage(detectedLanguageByAi);
+          _speechService.speak(
+            "Text captured and processed by Aniwa. Press speak, correct, or translate.",
+          );
+        } else {
+          _setErrorMessage("No text detected in the image by AI, or an error occurred during extraction.");
+          _speechService.speak("No text was detected by the AI.");
+        }
       }
     } catch (e) {
       logger.e("TextReaderState: Error taking picture or processing text: $e");
@@ -615,9 +626,7 @@ class TextReaderState extends ChangeNotifier {
             "Failed to set speech language for $targetLanguage. Speaking in default language.",
           );
         } else {
-          logger.i(
-            "TextReaderState: TTS language set to $targetLanguageCode.",
-          );
+          logger.i("TextReaderState: TTS language set to $targetLanguageCode.");
         }
       } else {
         logger.w(
@@ -807,9 +816,7 @@ class TextReaderState extends ChangeNotifier {
     }
 
     try {
-      logger.i(
-        "TextReaderState: Saving image to gallery: $_capturedImagePath",
-      );
+      logger.i("TextReaderState: Saving image to gallery: $_capturedImagePath");
       await Gal.putImage(_capturedImagePath!);
       _speechService.speak("Image saved to gallery successfully.");
       logger.i("TextReaderState: Image saved to gallery successfully.");

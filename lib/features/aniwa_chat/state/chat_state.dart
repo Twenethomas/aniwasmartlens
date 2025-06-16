@@ -25,6 +25,19 @@ class ChatState extends ChangeNotifier {
   // Chat Service for command processing
   late ChatService chatService;
 
+  // Current screen route for context awareness
+  String _currentScreenRoute = 'unknown';
+
+  // Method to update current screen route from main.dart
+  void updateCurrentRoute(String routeName) {
+    if (_currentScreenRoute != routeName) {
+      _logger.i('ChatState: Current screen route updated to $routeName');
+      _currentScreenRoute = routeName;
+      // Update ChatService with current screen route
+      chatService.updateCurrentRoute(routeName);
+    }
+  }
+
   // Internal conversation history
   List<Map<String, String>> _conversationHistory = [];
 
@@ -40,6 +53,9 @@ class ChatState extends ChangeNotifier {
   bool _isWakeWordListening = false;
   String _detectedWakeWord = '';
 
+  // Blind mode state
+  bool _isBlindModeEnabled = false;
+
   // Input Mode
   InputMode _currentInputMode = InputMode.voice;
   ChatStatus _chatStatus = ChatStatus.idle;
@@ -48,6 +64,8 @@ class ChatState extends ChangeNotifier {
   Timer? _commandDebounceTimer;
   Timer? _errorClearTimer;
   Timer? _followUpTimer; // Added: Timer for follow-up listening
+  bool _isInFollowUpListening =
+      false; // New flag to track follow-up listening state
   String? _lastCommand;
   DateTime? _lastCommandTime;
 
@@ -64,6 +82,12 @@ class ChatState extends ChangeNotifier {
 
   // Callback for UI to trigger scroll
   Function()? _scrollToBottomCallback;
+
+  // New field to track if the ChatPage is currently active/visible
+  bool _isChatPageActive = false;
+
+  // New field to hold the current partial assistant message during streaming
+  String _currentStreamingAssistantResponse = '';
 
   // Getters
   List<Map<String, String>> get conversationHistory =>
@@ -82,6 +106,12 @@ class ChatState extends ChangeNotifier {
   bool get isInitialized => _isInitialized;
   bool get hasErrors => _consecutiveErrors > 0;
 
+  bool get isBlindModeEnabled => _isBlindModeEnabled;
+
+  // Expose the current streaming response
+  String get currentStreamingAssistantResponse => _currentStreamingAssistantResponse;
+  bool get isStreamingAssistantResponse => _currentStreamingAssistantResponse.isNotEmpty;
+
   // Navigation callback - now explicitly set from main.dart
   Function(String routeName, {Object? arguments})? onNavigateRequested;
 
@@ -91,8 +121,32 @@ class ChatState extends ChangeNotifier {
     this._historyService,
     this._networkService,
   ) {
-    // _initializeChatService();
     _subscriptions = [];
+  }
+
+  // Method to update the active status of the chat page
+  void setChatPageActive(bool isActive) {
+    if (_isChatPageActive != isActive) {
+      _logger.i('ChatState: Chat page active status changed to: $isActive');
+      _isChatPageActive = isActive;
+    }
+  }
+
+  void enableBlindMode() {
+    _logger.i("ChatState: Enabling blind mode");
+    _isBlindModeEnabled = true;
+    // In blind mode, force voice input mode and start voice input
+    setInputMode(InputMode.voice);
+    startVoiceInput();
+    notifyListeners();
+  }
+
+  void disableBlindMode() {
+    _logger.i("ChatState: Disabling blind mode");
+    _isBlindModeEnabled = false;
+    // Optionally stop voice input or revert to default input mode
+    stopVoiceInput();
+    notifyListeners();
   }
 
   /// Sets a callback function to trigger scrolling to the bottom of the chat UI.
@@ -100,6 +154,55 @@ class ChatState extends ChangeNotifier {
   void setScrollToBottomCallback(Function() callback) {
     _scrollToBottomCallback = callback;
     _logger.d("ChatState: Scroll to bottom callback set.");
+  }
+
+  // Handle incoming partial assistant message chunks
+  Future<void> handlePartialAssistantMessage(String partialMessage) async {
+    _logger.d("ChatState: Received partial assistant message: '$partialMessage'");
+
+    if (_currentStreamingAssistantResponse.isEmpty && partialMessage.isNotEmpty) {
+      // This is the first chunk, so add a new (initially empty) assistant message to history
+      _conversationHistory.add({'role': 'assistant', 'content': ''});
+      _logger.d("ChatState: Added new empty assistant message for streaming.");
+    }
+
+    // Instead of appending, replace the current streaming response to simulate typing
+    _currentStreamingAssistantResponse = partialMessage;
+
+    // Update the last assistant message content with the current streaming response
+    if (_conversationHistory.isNotEmpty && _conversationHistory.last['role'] == 'assistant') {
+      _conversationHistory[_conversationHistory.length - 1]['content'] = _currentStreamingAssistantResponse;
+    }
+
+    // Only notify and scroll if the chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+      _scrollToBottomCallback?.call();
+    }
+  }
+
+  // Call this to finalize the assistant message after streaming completes
+  Future<void> finalizeAssistantMessage(String fullMessage) async {
+    _logger.i("ChatState: Finalizing assistant message: '$fullMessage'");
+
+    if (_conversationHistory.isNotEmpty && _conversationHistory.last['role'] == 'assistant') {
+      _conversationHistory[_conversationHistory.length - 1]['content'] = fullMessage;
+      _logger.d("ChatState: Updated last assistant message with full content.");
+    } else {
+      // Fallback in case of unexpected state (e.g., streaming started without initial empty message)
+      _conversationHistory.add({'role': 'assistant', 'content': fullMessage});
+      _logger.w("ChatState: Unexpected state: Added full assistant message directly. History may be out of sync.");
+    }
+
+    await _historyService.addEntry(fullMessage, role: 'assistant');
+    _currentStreamingAssistantResponse = ''; // Clear streaming buffer
+    _logger.d("ChatState: Streaming buffer cleared.");
+
+    // Only notify and scroll if the chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+      _scrollToBottomCallback?.call();
+    }
   }
 
   // Enhanced initialization
@@ -124,23 +227,6 @@ class ChatState extends ChangeNotifier {
       rethrow;
     }
   }
-
-  // void _initializeChatService() {
-  //   chatService = ChatService(
-  //     _speechService,
-  //     _geminiService,
-  //     _historyService,
-  //     _networkService,
-  //     onProcessingStatusChanged: setIsProcessingAI,
-  //     onSpeak: speak,
-  //     onVibrate: vibrate,
-  //     // onNavigate will be set by the main.dart file through chatState.navigateTo
-  //     // No direct setting of onNavigate here, as it's handled by main.dart's setup
-  //     onNavigate: navigateTo, // Pass chatState's own navigateTo method
-  //     onAddUserMessage: addUserMessage,
-  //     onAddAssistantMessage: addAssistantMessage,
-  //   );
-  // }
 
   Future<void> _subscribeToSpeechServiceStreams() async {
     // Clear existing subscriptions
@@ -253,7 +339,10 @@ class ChatState extends ChangeNotifier {
       _recognizedText = text;
       _updateChatStatus(ChatStatus.listening);
       _resetErrorCount(); // Reset error count on successful operation
-      notifyListeners();
+      // Only notify if chat page is active
+      if (_isChatPageActive) {
+        notifyListeners();
+      }
     }
   }
 
@@ -281,10 +370,21 @@ class ChatState extends ChangeNotifier {
       _updateChatStatus(ChatStatus.idle); // Set status to idle
       await _ensureWakeWordListening(); // Re-enable wake word
     }
-    // notifyListeners() is called in addUserMessage, not needed here directly.
-    // However, if no user message was added (e.g., empty text), we still need to notify.
-    if (finalText.isEmpty) {
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
       notifyListeners();
+    }
+  }
+
+  // New method to handle interruption: stop speaking and restart listening
+  Future<void> handleInterruption() async {
+    if (_isSpeaking) {
+      await stopSpeaking();
+      _logger.i("ChatState: Interrupted AI speech due to user input.");
+    }
+    if (!_isListening) {
+      await startVoiceInput();
+      _logger.i("ChatState: Restarted listening after interruption.");
     }
   }
 
@@ -299,17 +399,23 @@ class ChatState extends ChangeNotifier {
         stopSpeaking();
         _logger.i("ChatState: User interruption detected - stopping AI speech");
       }
-      _followUpTimer
-          ?.cancel(); // Cancel follow-up timer if listening starts manually
+      // Only cancel follow-up timer if not in follow-up listening mode
+      if (!_isInFollowUpListening) {
+        _followUpTimer
+            ?.cancel(); // Cancel follow-up timer if listening starts manually
+      }
     } else if (_chatStatus == ChatStatus.listening) {
       // Only set to idle if not currently speaking or processing, and not during follow-up
-      if (!_isSpeaking && !_isProcessingAI && _followUpTimer == null) {
+      if (!_isSpeaking && !_isProcessingAI && !_isInFollowUpListening) {
         _updateChatStatus(ChatStatus.idle);
       }
     }
 
     _resetErrorCount();
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
   }
 
   Future<void> _handleSpeakingStatusChanged(bool status) async {
@@ -326,26 +432,48 @@ class ChatState extends ChangeNotifier {
         "ChatState: TTS Finished speaking. Starting follow-up listening.",
       );
       _updateChatStatus(ChatStatus.listening); // Set status to listening
+        // Add this line to ensure microphone is preempted from wake word.
+        await _speechService.forcePreemptMicrophoneFromWakeWord();
+
       _isListening = true;
       _isWakeWordListening = false; // Ensure wake word is off
 
+      // Cancel any existing follow-up timer to avoid premature timeout
+      _followUpTimer?.cancel();
+
+      _isInFollowUpListening =
+          true; // Set flag to indicate follow-up listening active
+
+      // Force preempt microphone from wake word detection immediately before starting STT
+      await _speechService.forcePreemptMicrophoneFromWakeWord();
+
       // Start STT for follow-up questions for a limited duration
-      await _speechService.startExtendedListening(
-        maxDuration: _followUpListeningDuration,
-      );
+      try {
+        await _speechService.startExtendedListening(
+          maxDuration: _followUpListeningDuration,
+        );
+      } catch (e) {
+        _logger.w("ChatState: Failed to start follow-up listening: $e");
+        _isInFollowUpListening = false;
+        await _handleFollowUpTimeout();
+        return;
+      }
 
       // Start a timer to go back to wake word listening after follow-up duration
-      _followUpTimer?.cancel(); // Cancel any existing timer
       _followUpTimer = Timer(_followUpListeningDuration, () async {
         _logger.i(
           "ChatState: Follow-up listening timeout. Returning to wake word.",
         );
+        _isInFollowUpListening = false;
         await _handleFollowUpTimeout();
       });
     }
 
     _resetErrorCount();
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
   }
 
   // Added: New method to handle follow-up listening timeout
@@ -357,19 +485,28 @@ class ChatState extends ChangeNotifier {
     _logger.i("ChatState: Follow-up listening session ended.");
     await _ensureWakeWordListening(); // Re-enable wake word listening
     _updateChatStatus(ChatStatus.idle); // Set chat status to idle
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
   }
 
   void _handleSpeakingText(String text) {
     _aiSpeakingFullText = text;
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
   }
 
   void _handleWakeWordListeningChanged(bool status) {
     _isWakeWordListening = status;
     _logger.d("ChatState: Wake word listening status: $status");
     if (status) _resetErrorCount();
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
   }
 
   void _handleWakeWordDetected(String wakeWord) {
@@ -379,7 +516,10 @@ class ChatState extends ChangeNotifier {
       // CRITICAL FIX: Ensure _handleWakeWordActivation is awaited
       _handleWakeWordActivation(wakeWord);
       _resetErrorCount();
-      notifyListeners();
+      // Only notify if chat page is active
+      if (_isChatPageActive) {
+        notifyListeners();
+      }
     }
   }
 
@@ -395,6 +535,8 @@ class ChatState extends ChangeNotifier {
     setIsProcessingAI(isProcessing);
     if (isProcessing) {
       _updateChatStatus(ChatStatus.processing);
+      _currentStreamingAssistantResponse = ''; // Clear streaming buffer when processing starts
+      _logger.d("ChatState: Processing started, streaming buffer cleared.");
     } else if (_chatStatus == ChatStatus.processing) {
       _updateChatStatus(ChatStatus.idle);
     }
@@ -433,9 +575,12 @@ class ChatState extends ChangeNotifier {
       _logger.i(
         "ChatState: Loaded ${_conversationHistory.length} history entries",
       );
+      // Always notify, let the UI decide to rebuild
       notifyListeners();
-      // Ensure scroll to bottom after initial load
-      _scrollToBottomCallback?.call();
+      // Only trigger scroll if the chat page is currently active
+      if (_isChatPageActive) {
+        _scrollToBottomCallback?.call();
+      }
     } catch (e) {
       _logger.e("ChatState: Failed to load history: $e");
       _handleError("Failed to load conversation history");
@@ -534,6 +679,7 @@ class ChatState extends ChangeNotifier {
     await _processUserCommand(message);
   }
 
+  // This method is for adding complete messages to history (user messages, or AI after streaming)
   Future<void> addEntry(String content, {String role = 'assistant'}) async {
     try {
       _logger.i(
@@ -552,19 +698,16 @@ class ChatState extends ChangeNotifier {
         "ChatState: addEntry: AFTER saving to history service. Current history length: ${_conversationHistory.length}",
       );
 
-      notifyListeners();
-      _logger.i(
-        "ChatState: addEntry: AFTER notifyListeners. History length at time of callback: ${_conversationHistory.length}",
-      );
+      notifyListeners(); // Always notify, let the UI decide to rebuild
 
-      // Explicitly trigger scroll to bottom after new message is added and notified
-      if (_scrollToBottomCallback != null) {
-        _logger.i("ChatState: addEntry: Triggering scroll to bottom callback.");
+      // Only trigger scroll to bottom after new message is added and notified if chat page is active
+      if (_isChatPageActive && _scrollToBottomCallback != null) {
+        _logger.i("ChatState: addEntry: Triggering scroll to bottom callback (chat page active).");
         _scrollToBottomCallback!();
+      } else if (!_isChatPageActive) {
+        _logger.i("ChatState: addEntry: Skipping scroll, chat page not active.");
       } else {
-        _logger.w(
-          "ChatState: addEntry: _scrollToBottomCallback is null. Cannot scroll.",
-        );
+        _logger.w("ChatState: addEntry: _scrollToBottomCallback is null. Cannot scroll.");
       }
     } catch (e) {
       _logger.e("ChatState: Failed to add entry: $e");
@@ -589,8 +732,12 @@ class ChatState extends ChangeNotifier {
       await _historyService.clearHistory();
       _setErrorMessage(null);
       _updateChatStatus(ChatStatus.idle);
+      // Always notify, let the UI decide to rebuild
       notifyListeners();
-      _scrollToBottomCallback?.call(); // Scroll to top (empty state)
+      // Only trigger scroll if the chat page is currently active
+      if (_isChatPageActive) {
+        _scrollToBottomCallback?.call(); // Scroll to top (empty state)
+      }
     } catch (e) {
       _logger.e("ChatState: Failed to clear history: $e");
       _handleError("Failed to clear history");
@@ -614,6 +761,7 @@ class ChatState extends ChangeNotifier {
         await stopWakeWordListening();
       }
       // Use the enhanced listening from the improved speech service
+      // _speechService.startListening() now handles microphone acquisition delays
       await _speechService.startExtendedListening(
         maxDuration: const Duration(minutes: 3),
       );
@@ -680,7 +828,10 @@ class ChatState extends ChangeNotifier {
         "Voice activation (wake word) is unavailable. Please use text input.",
         autoClearing: false,
       );
-      notifyListeners();
+      // Only notify if chat page is active
+      if (_isChatPageActive) {
+        notifyListeners();
+      }
       return;
     }
 
@@ -713,7 +864,10 @@ class ChatState extends ChangeNotifier {
         );
       }
     }
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
   }
 
   void _handleWakeWordActivation(String wakeWord) async {
@@ -725,7 +879,7 @@ class ChatState extends ChangeNotifier {
 
     // Stop AI speech if active
     if (_isSpeaking) {
-      stopSpeaking();
+      await stopSpeaking();
       _logger.i("ChatState: Stopped AI speech due to wake word");
     }
 
@@ -748,7 +902,10 @@ class ChatState extends ChangeNotifier {
 
     _isListening = true; // Set listening status
     _updateChatStatus(ChatStatus.listening);
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
 
     // Start a timer to go back to wake word listening after follow-up duration
     _followUpTimer?.cancel(); // Ensure any previous timer is canceled
@@ -763,7 +920,10 @@ class ChatState extends ChangeNotifier {
   void clearDetectedWakeWord() {
     _detectedWakeWord = '';
     _speechService.clearRecognizedText();
-    notifyListeners();
+    // Only notify if chat page is active
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
   }
 
   // Input Mode Control
@@ -783,7 +943,10 @@ class ChatState extends ChangeNotifier {
 
       _followUpTimer
           ?.cancel(); // Added: Cancel follow-up timer if input mode changes
-      notifyListeners();
+      // Only notify if chat page is active
+      if (_isChatPageActive) {
+        notifyListeners();
+      }
     }
   }
 
@@ -792,7 +955,10 @@ class ChatState extends ChangeNotifier {
     if (_chatStatus != status) {
       _chatStatus = status;
       _logger.d("ChatState: Chat status changed to: $status");
-      notifyListeners();
+      // Only notify if chat page is active
+      if (_isChatPageActive) {
+        notifyListeners();
+      }
     }
   }
 
@@ -814,7 +980,10 @@ class ChatState extends ChangeNotifier {
           });
         }
       }
-      notifyListeners();
+      // Only notify if chat page is active
+      if (_isChatPageActive) {
+        notifyListeners();
+      }
     }
   }
 
@@ -822,7 +991,10 @@ class ChatState extends ChangeNotifier {
     if (_isProcessingAI != status) {
       _isProcessingAI = status;
       _logger.d("ChatState: isProcessingAI changed to: $status");
-      notifyListeners();
+      // Only notify if chat page is active
+      if (_isChatPageActive) {
+        notifyListeners();
+      }
     }
   }
 
@@ -831,9 +1003,12 @@ class ChatState extends ChangeNotifier {
     _logger.i(
       "ChatState: History updated externally. New length: ${_conversationHistory.length}",
     );
+    // Always notify, let the UI decide to rebuild
     notifyListeners();
-    _scrollToBottomCallback
-        ?.call(); // Ensure scroll to bottom after history update
+    // Only trigger scroll if the chat page is currently active
+    if (_isChatPageActive) {
+      _scrollToBottomCallback?.call(); // Ensure scroll to bottom after history update
+    }
   }
 
   void vibrate() {

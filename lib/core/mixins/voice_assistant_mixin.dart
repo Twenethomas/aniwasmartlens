@@ -6,15 +6,21 @@ import 'package:vibration/vibration.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:provider/provider.dart'; // Import Provider
 
-// Import the correct Speech Service file
 import '../services/speech_service.dart';
-// Removed Azure GPT Service as it's no longer directly used here.
-// import '../services/azure_gpt_service.dart';
-// Import ChatService-+
+
 import '../../features/aniwa_chat/state/chat_state.dart'; // NEW: Import ChatState
 import '../../main.dart'; // For global logger
 
+// Import Provider
+
+import '../services/speech_coordinator.dart';
+// NEW: Import ChatState
+// For global logger
+
 mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
+  final SpeechCoordinator _speechCoordinator = SpeechCoordinator(
+    SpeechService(),
+  );
   final SpeechService _speechService = SpeechService();
   final Logger _logger = logger; // Use the global logger
 
@@ -50,8 +56,10 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
   }
 
   void _subscribeToSpeechServiceStreams() {
-    _listeningStatusSubscription =
-        _speechService.listeningStatusStream.listen((status) {
+    final speechService = _speechService;
+    _listeningStatusSubscription = speechService.listeningStatusStream.listen((
+      status,
+    ) {
       if (mounted) {
         setState(() {
           _isVoiceAssistantListening = status;
@@ -59,8 +67,9 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
       }
     });
 
-    _speakingStatusSubscription =
-        _speechService.speakingStatusStream.listen((status) {
+    _speakingStatusSubscription = speechService.speakingStatusStream.listen((
+      status,
+    ) {
       if (mounted) {
         setState(() {
           _isVoiceAssistantSpeaking = status;
@@ -68,8 +77,9 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
       }
     });
 
-    _recognizedTextSubscription =
-        _speechService.recognizedTextStream.listen((text) {
+    _recognizedTextSubscription = speechService.recognizedTextStream.listen((
+      text,
+    ) {
       if (mounted) {
         setState(() {
           _voiceAssistantRecognizedText = text;
@@ -77,15 +87,15 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
       }
     });
 
-    _finalRecognizedTextSubscription =
-        _speechService.finalRecognizedTextStream.listen((text) {
-      if (mounted) {
-        _logger.i('Final recognized text from Flutter STT: $text');
-        _onFinalRecognizedText(text);
-      }
-    });
+    _finalRecognizedTextSubscription = speechService.finalRecognizedTextStream
+        .listen((text) {
+          if (mounted) {
+            _logger.i('Final recognized text from Flutter STT: $text');
+            _onFinalRecognizedText(text);
+          }
+        });
 
-    _speakingTextSubscription = _speechService.speakingTextStream.listen((text) {
+    _speakingTextSubscription = speechService.speakingTextStream.listen((text) {
       if (mounted) {
         setState(() {
           _voiceAssistantSpeakingText = text;
@@ -95,8 +105,9 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
   }
 
   void _subscribeToConnectivityChanges() {
-    _connectivitySubscription =
-        Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
+      List<ConnectivityResult> results,
+    ) {
       final isOnline = !results.contains(ConnectivityResult.none);
       _logger.i('Connectivity changed. Online: $isOnline');
     });
@@ -111,12 +122,17 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
 
     // Use the SpeechService for both continuous and non-continuous listening.
     if (_speechService.isListeningStt) {
-      _logger.w('Speech service already listening. Stopping first for a clean restart.');
+      _logger.w(
+        'Speech service already listening. Stopping first for a clean restart.',
+      );
       _speechService.stopListening();
       await Future.delayed(const Duration(milliseconds: 300));
     }
-    await _speechService.startListening(continuous: continuous);
-    if (await Vibration.hasVibrator() ?? false) { // Corrected null-aware operator for bool?
+    await _speechService.startListening(
+      continuous: continuous,
+    );
+    if (await Vibration.hasVibrator() ?? false) {
+      // Corrected null-aware operator for bool?
       Vibration.vibrate(duration: 50); // Short haptic feedback
     }
     if (mounted) {
@@ -140,12 +156,12 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
 
   Future<void> speak(String text) async {
     _logger.i('Speaking: $text');
-    await _speechService.speak(text);
+    await _speechCoordinator.speak(text);
   }
 
   void stopSpeaking() {
     _logger.i('Stopping speaking.');
-    _speechService.stopSpeaking();
+    _speechCoordinator.stopSpeaking();
   }
 
   Future<void> _onFinalRecognizedText(String command) async {
@@ -174,7 +190,9 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
       // Assuming ChatState has a method to process commands and takes BuildContext
       await chatState.addUserMessage(command);
     } else {
-      _logger.e("VoiceAssistantMixin: Context not mounted, cannot process command via ChatState.");
+      _logger.e(
+        "VoiceAssistantMixin: Context not mounted, cannot process command via ChatState.",
+      );
     }
   }
 

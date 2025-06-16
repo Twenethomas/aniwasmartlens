@@ -205,7 +205,7 @@ class _SceneDescriptionPageState extends State<SceneDescriptionPage>
                 builder: (BuildContext context, ScrollController scrollController) {
                   return Container(
                     decoration: BoxDecoration(
-                      color: colorScheme.surface,
+                      color: colorScheme.surface.withAlpha((0.95 * 255).round()), // Slight transparency
                       borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
                       boxShadow: [
                         BoxShadow(

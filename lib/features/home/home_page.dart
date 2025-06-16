@@ -126,7 +126,11 @@ class _HomePageState extends State<HomePage>
     _quickActionsIconController = AnimationController(
       duration: Duration(milliseconds: totalIconAnimationTimeMs),
       vsync: this,
-    );
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          _quickActionsIconController.forward(from: 0.0); // Restart the animation
+        }
+      });
 
     // Start other animations with staggered delays
     _heroAnimationController.forward();
@@ -136,8 +140,7 @@ class _HomePageState extends State<HomePage>
     Future.delayed(const Duration(milliseconds: 600), () {
       _cardAnimationController.forward();
       // Start quick actions icon animation after cards start appearing
-      _quickActionsIconController
-          .repeat(); // This ensures the animation loops indefinitely
+      _quickActionsIconController.forward(); // Start it once, it will loop via the status listener
     });
   }
 
@@ -201,9 +204,9 @@ class _HomePageState extends State<HomePage>
   @override
   void didPop() {
     // This page has been popped off the stack and is no longer visible.
-    Logger().i('HomePage: didPop - Pausing chat state.');
+    Logger().i('HomePage: didPop');
     // Pause chat state to stop microphone use when not on this screen
-    Provider.of<ChatState>(context, listen: false).pause();
+    // Provider.of<ChatState>(context, listen: false).pause();
   }
 
   @override
@@ -211,7 +214,7 @@ class _HomePageState extends State<HomePage>
     // Another page has been pushed on top of this one, making this page inactive.
     Logger().i('HomePage: didPushNext - Pausing chat state.');
     // Pause chat state to stop microphone use when not on this screen
-    Provider.of<ChatState>(context, listen: false).pause();
+    // Provider.of<ChatState>(context, listen: false).pause();
   }
   // --- End RouteAware methods ---
 

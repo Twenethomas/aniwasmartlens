@@ -20,7 +20,7 @@ class TextReaderPage extends StatefulWidget {
 class _TextReaderPageState extends State<TextReaderPage>
     with WidgetsBindingObserver, RouteAware, TickerProviderStateMixin {
   late TextReaderState _textReaderState; // Reference to TextReaderState
-  
+
   // Track page visibility and initialization state
   bool _isPageActive = false;
   bool _isInitialized = false;
@@ -77,7 +77,7 @@ class _TextReaderPageState extends State<TextReaderPage>
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_isDisposing) return;
-    
+
     _textReaderState = Provider.of<TextReaderState>(context, listen: false);
 
     // Subscribe to RouteObserver
@@ -97,7 +97,7 @@ class _TextReaderPageState extends State<TextReaderPage>
   /// Initialize all page resources
   void _initializePageResources() {
     if (_isDisposing || !_isPageActive) return;
-    
+
     // Initialize camera with a small delay to ensure proper context
     Future.delayed(const Duration(milliseconds: 100), () {
       if (!_isDisposing && _isPageActive && mounted) {
@@ -109,18 +109,18 @@ class _TextReaderPageState extends State<TextReaderPage>
   /// Clean up all page resources
   void _cleanupPageResources({bool keepProcessingFlags = false}) {
     if (_isDisposing) return;
-    
+
     // Stop all ongoing processes
     _textReaderState.clearResults(keepProcessingFlags: keepProcessingFlags);
-    
+
     // Stop any ongoing speech
     if (_textReaderState.isSpeaking) {
       _textReaderState.stopSpeaking();
     }
-    
+
     // Dispose camera resources
     _textReaderState.disposeCamera();
-    
+
     // Clear any temporary files or cached data if needed
     // This could include clearing captured image paths, etc.
   }
@@ -129,7 +129,7 @@ class _TextReaderPageState extends State<TextReaderPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (_isDisposing) return;
-    
+
     switch (state) {
       case AppLifecycleState.resumed:
         if (_isPageActive) {
@@ -141,7 +141,7 @@ class _TextReaderPageState extends State<TextReaderPage>
           });
         }
         break;
-        
+
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
       case AppLifecycleState.detached:
@@ -156,9 +156,9 @@ class _TextReaderPageState extends State<TextReaderPage>
   void didPopNext() {
     // Called when returning to this page from another page
     if (_isDisposing) return;
-    
+
     _isPageActive = true;
-    
+
     // Add delay to ensure previous page resources are fully released
     Future.delayed(const Duration(milliseconds: 500), () {
       if (!_isDisposing && _isPageActive && mounted) {
@@ -198,17 +198,17 @@ class _TextReaderPageState extends State<TextReaderPage>
   void dispose() {
     _isDisposing = true;
     _isPageActive = false;
-    
+
     // Stop animation controller
     _textInViewPulseController.dispose();
-    
+
     // Remove observers
     WidgetsBinding.instance.removeObserver(this);
     routeObserver.unsubscribe(this);
-    
+
     // Final cleanup of all resources
     _cleanupPageResources(keepProcessingFlags: false);
-    
+
     super.dispose();
   }
 
@@ -335,16 +335,20 @@ class _TextReaderPageState extends State<TextReaderPage>
                   state.isAutoCaptureEnabled
                       ? Icons.auto_mode_rounded
                       : Icons.auto_mode_outlined,
-                  color: state.isAutoCaptureEnabled
-                      ? colorScheme.tertiary
-                      : colorScheme.onPrimary,
+                  color:
+                      state.isAutoCaptureEnabled
+                          ? colorScheme.tertiary
+                          : colorScheme.onPrimary,
                 ),
-                onPressed: _isPageActive && !_isDisposing
-                    ? () => state.setAutoCapture(!state.isAutoCaptureEnabled)
-                    : null,
-                tooltip: state.isAutoCaptureEnabled
-                    ? 'Auto Capture ON'
-                    : 'Auto Capture OFF',
+                onPressed:
+                    _isPageActive && !_isDisposing
+                        ? () =>
+                            state.setAutoCapture(!state.isAutoCaptureEnabled)
+                        : null,
+                tooltip:
+                    state.isAutoCaptureEnabled
+                        ? 'Auto Capture ON'
+                        : 'Auto Capture OFF',
               ),
               // Flash Toggle
               IconButton(
@@ -354,11 +358,12 @@ class _TextReaderPageState extends State<TextReaderPage>
                       : Icons.flash_off_rounded,
                   color: colorScheme.onPrimary,
                 ),
-                onPressed: _isPageActive && 
-                          !_isDisposing && 
-                          cameraService.isCameraInitialized
-                    ? state.toggleFlash
-                    : null,
+                onPressed:
+                    _isPageActive &&
+                            !_isDisposing &&
+                            cameraService.isCameraInitialized
+                        ? state.toggleFlash
+                        : null,
                 tooltip: 'Toggle Flash',
               ),
               // Clear All/New Scan
@@ -367,11 +372,12 @@ class _TextReaderPageState extends State<TextReaderPage>
                   Icons.clear_all_rounded,
                   color: colorScheme.onPrimary,
                 ),
-                onPressed: _isPageActive && 
-                          !_isDisposing && 
-                          !state.isAnyProcessingActive
-                    ? state.clearResults
-                    : null,
+                onPressed:
+                    _isPageActive &&
+                            !_isDisposing &&
+                            !state.isAnyProcessingActive
+                        ? state.clearResults
+                        : null,
                 tooltip: 'Start New Scan / Clear Results',
               ),
             ],
@@ -388,32 +394,33 @@ class _TextReaderPageState extends State<TextReaderPage>
                   )
                 else
                   Center(
-                    child: cameraService.cameraErrorMessage != null &&
-                            cameraService.cameraErrorMessage!.isNotEmpty
-                        ? Text(
-                            cameraService.cameraErrorMessage!,
-                            style: textTheme.headlineSmall?.copyWith(
-                              color: colorScheme.error,
-                            ),
-                            textAlign: TextAlign.center,
-                          )
-                        : Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              CircularProgressIndicator(
-                                color: colorScheme.primary,
+                    child:
+                        cameraService.cameraErrorMessage != null &&
+                                cameraService.cameraErrorMessage!.isNotEmpty
+                            ? Text(
+                              cameraService.cameraErrorMessage!,
+                              style: textTheme.headlineSmall?.copyWith(
+                                color: colorScheme.error,
                               ),
-                              const SizedBox(height: 16),
-                              Text(
-                                _isPageActive
-                                    ? 'Initializing camera...'
-                                    : 'Camera paused',
-                                style: textTheme.bodyMedium?.copyWith(
-                                  color: colorScheme.onSurface,
+                              textAlign: TextAlign.center,
+                            )
+                            : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                CircularProgressIndicator(
+                                  color: colorScheme.primary,
                                 ),
-                              ),
-                            ],
-                          ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  _isPageActive
+                                      ? 'Initializing camera...'
+                                      : 'Camera paused',
+                                  style: textTheme.bodyMedium?.copyWith(
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                              ],
+                            ),
                   )
               else
                 Positioned.fill(
@@ -429,7 +436,8 @@ class _TextReaderPageState extends State<TextReaderPage>
                   !state.isAnyProcessingActive &&
                   _isPageActive)
                 Positioned(
-                  top: MediaQuery.of(context).padding.top +
+                  top:
+                      MediaQuery.of(context).padding.top +
                       AppBar().preferredSize.height +
                       16,
                   left: 0,
@@ -447,7 +455,9 @@ class _TextReaderPageState extends State<TextReaderPage>
                           borderRadius: BorderRadius.circular(25),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.green.withAlpha((0.4 * 255).round()),
+                              color: Colors.green.withAlpha(
+                                (0.4 * 255).round(),
+                              ),
                               blurRadius: 10,
                               spreadRadius: 3,
                             ),
@@ -482,10 +492,15 @@ class _TextReaderPageState extends State<TextReaderPage>
                 minChildSize: 0.15,
                 maxChildSize: 0.9,
                 expand: true,
-                builder: (BuildContext context, ScrollController scrollController) {
+                builder: (
+                  BuildContext context,
+                  ScrollController scrollController,
+                ) {
                   return Container(
                     decoration: BoxDecoration(
-                      color: colorScheme.surface.withAlpha((0.98 * 255).round()),
+                      color: colorScheme.surface.withAlpha(
+                        (0.98 * 255).round(),
+                      ),
                       borderRadius: const BorderRadius.only(
                         topLeft: Radius.circular(28),
                         topRight: Radius.circular(28),
@@ -507,7 +522,9 @@ class _TextReaderPageState extends State<TextReaderPage>
                             width: 60,
                             height: 5,
                             decoration: BoxDecoration(
-                              color: colorScheme.onSurface.withAlpha((0.3 * 255).round()),
+                              color: colorScheme.onSurface.withAlpha(
+                                (0.3 * 255).round(),
+                              ),
                               borderRadius: BorderRadius.circular(10),
                             ),
                           ),
@@ -524,7 +541,9 @@ class _TextReaderPageState extends State<TextReaderPage>
                                 if (state.errorMessage != null &&
                                     state.errorMessage!.isNotEmpty)
                                   Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8.0,
+                                    ),
                                     child: Center(
                                       child: Text(
                                         state.errorMessage!,
@@ -542,7 +561,9 @@ class _TextReaderPageState extends State<TextReaderPage>
                                 if (state.capturedImagePath != null)
                                   Center(
                                     child: Padding(
-                                      padding: const EdgeInsets.only(bottom: 16.0),
+                                      padding: const EdgeInsets.only(
+                                        bottom: 16.0,
+                                      ),
                                       child: ClipRRect(
                                         borderRadius: BorderRadius.circular(16),
                                         child: Image.file(
@@ -568,17 +589,20 @@ class _TextReaderPageState extends State<TextReaderPage>
                                 // Recognized Text Card
                                 _buildTextCard(
                                   title: 'Raw OCR Text',
-                                  content: state.recognizedText.isNotEmpty
-                                      ? state.recognizedText
-                                      : (state.isProcessingImage
-                                          ? 'Recognizing...'
-                                          : 'No text captured.'),
+                                  content:
+                                      state.recognizedText.isNotEmpty
+                                          ? state.recognizedText
+                                          : (state.isProcessingImage
+                                              ? 'Recognizing...'
+                                              : 'No text captured.'),
                                   titleStyle: textTheme.titleMedium!.copyWith(
                                     fontWeight: FontWeight.w600,
                                     color: colorScheme.onSurface,
                                   ),
                                   contentStyle: textTheme.bodyLarge!.copyWith(
-                                    color: colorScheme.onSurface.withAlpha((0.9 * 255).round()),
+                                    color: colorScheme.onSurface.withAlpha(
+                                      (0.9 * 255).round(),
+                                    ),
                                   ),
                                   isLoading: state.isProcessingImage,
                                   icon: Icons.text_snippet_rounded,
@@ -586,20 +610,24 @@ class _TextReaderPageState extends State<TextReaderPage>
                                 ),
 
                                 // Corrected Text Card (only if different or processing)
-                                if (state.correctedText.isNotEmpty || state.isProcessingAI)
+                                if (state.correctedText.isNotEmpty ||
+                                    state.isProcessingAI)
                                   _buildTextCard(
                                     title: 'AI Corrected Text',
-                                    content: state.correctedText.isNotEmpty
-                                        ? state.correctedText
-                                        : (state.isProcessingAI
-                                            ? 'Correcting...'
-                                            : 'No AI correction yet.'),
+                                    content:
+                                        state.correctedText.isNotEmpty
+                                            ? state.correctedText
+                                            : (state.isProcessingAI
+                                                ? 'Correcting...'
+                                                : 'No AI correction yet.'),
                                     titleStyle: textTheme.titleMedium!.copyWith(
                                       fontWeight: FontWeight.w600,
                                       color: colorScheme.onSurface,
                                     ),
                                     contentStyle: textTheme.bodyLarge!.copyWith(
-                                      color: colorScheme.onSurface.withAlpha((0.9 * 255).round()),
+                                      color: colorScheme.onSurface.withAlpha(
+                                        (0.9 * 255).round(),
+                                      ),
                                     ),
                                     isLoading: state.isProcessingAI,
                                     icon: Icons.auto_fix_high_rounded,
@@ -607,20 +635,24 @@ class _TextReaderPageState extends State<TextReaderPage>
                                   ),
 
                                 // Translated Text Card (only if different or translating)
-                                if (state.translatedText.isNotEmpty || state.isTranslating)
+                                if (state.translatedText.isNotEmpty ||
+                                    state.isTranslating)
                                   _buildTextCard(
                                     title: 'Translated Text',
-                                    content: state.translatedText.isNotEmpty
-                                        ? state.translatedText
-                                        : (state.isTranslating
-                                            ? 'Translating...'
-                                            : 'Select language below.'),
+                                    content:
+                                        state.translatedText.isNotEmpty
+                                            ? state.translatedText
+                                            : (state.isTranslating
+                                                ? 'Translating...'
+                                                : 'Select language below.'),
                                     titleStyle: textTheme.titleMedium!.copyWith(
                                       fontWeight: FontWeight.w600,
                                       color: colorScheme.onSurface,
                                     ),
                                     contentStyle: textTheme.bodyLarge!.copyWith(
-                                      color: colorScheme.onSurface.withAlpha((0.9 * 255).round()),
+                                      color: colorScheme.onSurface.withAlpha(
+                                        (0.9 * 255).round(),
+                                      ),
                                     ),
                                     isLoading: state.isTranslating,
                                     icon: Icons.translate_rounded,
@@ -638,7 +670,9 @@ class _TextReaderPageState extends State<TextReaderPage>
                                     children: [
                                       Icon(
                                         Icons.language_rounded,
-                                        color: colorScheme.onSurface.withAlpha((0.7 * 255).round()),
+                                        color: colorScheme.onSurface.withAlpha(
+                                          (0.7 * 255).round(),
+                                        ),
                                         size: 20,
                                       ),
                                       const SizedBox(width: 8),
@@ -646,7 +680,8 @@ class _TextReaderPageState extends State<TextReaderPage>
                                         'Detected Language:',
                                         style: textTheme.titleSmall!.copyWith(
                                           fontWeight: FontWeight.bold,
-                                          color: colorScheme.onSurface.withAlpha((0.8 * 255).round()),
+                                          color: colorScheme.onSurface
+                                              .withAlpha((0.8 * 255).round()),
                                         ),
                                       ),
                                       const SizedBox(width: 8),
@@ -657,7 +692,8 @@ class _TextReaderPageState extends State<TextReaderPage>
                                                 ? 'Detecting...'
                                                 : 'N/A'),
                                         style: textTheme.bodyMedium!.copyWith(
-                                          color: colorScheme.onSurface.withAlpha((0.7 * 255).round()),
+                                          color: colorScheme.onSurface
+                                              .withAlpha((0.7 * 255).round()),
                                           fontStyle: FontStyle.italic,
                                         ),
                                       ),
@@ -673,7 +709,9 @@ class _TextReaderPageState extends State<TextReaderPage>
                                     _isPageActive)
                                   Center(
                                     child: Padding(
-                                      padding: const EdgeInsets.only(bottom: 20.0),
+                                      padding: const EdgeInsets.only(
+                                        bottom: 20.0,
+                                      ),
                                       child: ElevatedButton.icon(
                                         onPressed: state.speakCurrentText,
                                         icon: Icon(
@@ -690,47 +728,96 @@ class _TextReaderPageState extends State<TextReaderPage>
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor: colorScheme.primary,
                                           shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
+                                            borderRadius: BorderRadius.circular(
+                                              12,
+                                            ),
                                           ),
                                           padding: const EdgeInsets.symmetric(
                                             horizontal: 24,
                                             vertical: 14,
                                           ),
                                           elevation: 5,
-                                          shadowColor: colorScheme.primary.withAlpha((0.3 * 255).round()),
+                                          shadowColor: colorScheme.primary
+                                              .withAlpha((0.3 * 255).round()),
                                         ),
                                       ),
                                     ),
                                   ),
                                 if (state.isSpeaking && _isPageActive)
-                                  Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(bottom: 20.0),
-                                      child: ElevatedButton.icon(
-                                        onPressed: state.stopSpeaking,
-                                        icon: Icon(
-                                          Icons.volume_off_rounded,
-                                          color: colorScheme.onPrimary,
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 20.0,
                                         ),
-                                        label: Text(
-                                          'Stop Speaking',
-                                          style: textTheme.labelLarge?.copyWith(
+                                        child: ElevatedButton.icon(
+                                          onPressed: state.stopSpeaking,
+                                          icon: Icon(
+                                            Icons.volume_off_rounded,
                                             color: colorScheme.onPrimary,
-                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          label: Text(
+                                            'Stop Speaking',
+                                            style: textTheme.labelLarge
+                                                ?.copyWith(
+                                                  color: colorScheme.onPrimary,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                          ),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: colorScheme.primary
+                                                .withAlpha((0.7 * 255).round()),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 24,
+                                              vertical: 14,
+                                            ),
+                                            elevation: 5,
+                                            shadowColor: colorScheme.primary
+                                                .withAlpha((0.3 * 255).round()),
                                           ),
                                         ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: colorScheme.primary.withAlpha((0.7 * 255).round()),
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 24,
-                                            vertical: 14,
-                                          ),
-                                          elevation: 5,
-                                          shadowColor: colorScheme.primary.withAlpha((0.3 * 255).round()),
+                                      ),
+                                    ],
+                                  ),
+                                if (state.hasText)
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      bottom: 20.0,
+                                    ),
+                                    child: ElevatedButton.icon(
+                                      onPressed: state.correctText,
+                                      icon: Icon(
+                                        Icons.volume_off_rounded,
+                                        color: colorScheme.onPrimary,
+                                      ),
+                                      label: Text(
+                                        'Correct Text',
+                                        style: textTheme.labelLarge?.copyWith(
+                                          color: colorScheme.onPrimary,
+                                          fontWeight: FontWeight.bold,
                                         ),
+                                      ),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: colorScheme.primary
+                                            .withAlpha((0.7 * 255).round()),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 30,
+                                          vertical: 14,
+                                        ),
+                                        elevation: 5,
+                                        shadowColor: colorScheme.primary
+                                            .withAlpha((0.3 * 255).round()),
                                       ),
                                     ),
                                   ),
@@ -740,7 +827,8 @@ class _TextReaderPageState extends State<TextReaderPage>
                                     !state.isAnyProcessingActive &&
                                     _isPageActive)
                                   Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Padding(
                                         padding: const EdgeInsets.symmetric(
@@ -751,104 +839,169 @@ class _TextReaderPageState extends State<TextReaderPage>
                                           'Translate to:',
                                           style: textTheme.titleSmall!.copyWith(
                                             fontWeight: FontWeight.bold,
-                                            color: colorScheme.onSurface.withAlpha((0.8 * 255).round()),
+                                            color: colorScheme.onSurface
+                                                .withAlpha((0.8 * 255).round()),
                                           ),
                                         ),
                                       ),
                                       Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 8.0,
+                                        ),
                                         child: Row(
                                           children: [
                                             Expanded(
-                                              child: DropdownButtonFormField<String>(
+                                              child: DropdownButtonFormField<
+                                                String
+                                              >(
                                                 value: _selectedTargetLanguage,
                                                 decoration: InputDecoration(
                                                   labelText: 'Select Language',
-                                                  labelStyle: textTheme.bodyMedium?.copyWith(
-                                                    color: colorScheme.onSurface.withAlpha((0.7 * 255).round()),
-                                                  ),
-                                                  border: OutlineInputBorder(
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    borderSide: BorderSide(
-                                                      color: colorScheme.outline.withAlpha((0.5 * 255).round()),
-                                                    ),
-                                                  ),
-                                                  focusedBorder: OutlineInputBorder(
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    borderSide: BorderSide(
-                                                      color: colorScheme.primary,
-                                                      width: 2,
-                                                    ),
-                                                  ),
-                                                  enabledBorder: OutlineInputBorder(
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    borderSide: BorderSide(
-                                                      color: colorScheme.outline.withAlpha((0.3 * 255).round()),
-                                                    ),
-                                                  ),
-                                                  contentPadding: const EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                    vertical: 12,
-                                                  ),
-                                                ),
-                                                items: _languages.map((String lang) {
-                                                  return DropdownMenuItem<String>(
-                                                    value: lang,
-                                                    child: Text(
-                                                      lang,
-                                                      style: textTheme.bodyMedium?.copyWith(
-                                                        color: colorScheme.onSurface,
+                                                  labelStyle: textTheme
+                                                      .bodyMedium
+                                                      ?.copyWith(
+                                                        color: colorScheme
+                                                            .onSurface
+                                                            .withAlpha(
+                                                              (0.7 * 255)
+                                                                  .round(),
+                                                            ),
                                                       ),
+                                                  border: OutlineInputBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          12,
+                                                        ),
+                                                    borderSide: BorderSide(
+                                                      color: colorScheme.outline
+                                                          .withAlpha(
+                                                            (0.5 * 255).round(),
+                                                          ),
                                                     ),
-                                                  );
-                                                }).toList(),
-                                                onChanged: state.isTranslating
-                                                    ? null
-                                                    : (String? newValue) {
-                                                        setState(() {
-                                                          _selectedTargetLanguage = newValue;
-                                                        });
-                                                      },
-                                                dropdownColor: colorScheme.surfaceContainerHigh,
-                                                style: textTheme.bodyMedium?.copyWith(
-                                                  color: colorScheme.onSurface,
+                                                  ),
+                                                  focusedBorder:
+                                                      OutlineInputBorder(
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              12,
+                                                            ),
+                                                        borderSide: BorderSide(
+                                                          color:
+                                                              colorScheme
+                                                                  .primary,
+                                                          width: 2,
+                                                        ),
+                                                      ),
+                                                  enabledBorder:
+                                                      OutlineInputBorder(
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              12,
+                                                            ),
+                                                        borderSide: BorderSide(
+                                                          color: colorScheme
+                                                              .outline
+                                                              .withAlpha(
+                                                                (0.3 * 255)
+                                                                    .round(),
+                                                              ),
+                                                        ),
+                                                      ),
+                                                  contentPadding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 16,
+                                                        vertical: 12,
+                                                      ),
                                                 ),
-                                                iconEnabledColor: colorScheme.primary,
+                                                items:
+                                                    _languages.map((
+                                                      String lang,
+                                                    ) {
+                                                      return DropdownMenuItem<
+                                                        String
+                                                      >(
+                                                        value: lang,
+                                                        child: Text(
+                                                          lang,
+                                                          style: textTheme
+                                                              .bodyMedium
+                                                              ?.copyWith(
+                                                                color:
+                                                                    colorScheme
+                                                                        .onSurface,
+                                                              ),
+                                                        ),
+                                                      );
+                                                    }).toList(),
+                                                onChanged:
+                                                    state.isTranslating
+                                                        ? null
+                                                        : (String? newValue) {
+                                                          setState(() {
+                                                            _selectedTargetLanguage =
+                                                                newValue;
+                                                          });
+                                                        },
+                                                dropdownColor:
+                                                    colorScheme
+                                                        .surfaceContainerHigh,
+                                                style: textTheme.bodyMedium
+                                                    ?.copyWith(
+                                                      color:
+                                                          colorScheme.onSurface,
+                                                    ),
+                                                iconEnabledColor:
+                                                    colorScheme.primary,
                                               ),
                                             ),
                                             const SizedBox(width: 12),
                                             ElevatedButton(
-                                              onPressed: state.isTranslating ||
-                                                      _selectedTargetLanguage == null ||
-                                                      state.correctedText.isEmpty ||
-                                                      !_isPageActive
-                                                  ? null
-                                                  : () => state.translateText(_selectedTargetLanguage!),
+                                              onPressed:
+                                                  state.isTranslating ||
+                                                          _selectedTargetLanguage ==
+                                                              null ||
+                                                          state
+                                                              .correctedText
+                                                              .isEmpty ||
+                                                          !_isPageActive
+                                                      ? null
+                                                      : () => state.translateText(
+                                                        _selectedTargetLanguage!,
+                                                      ),
                                               style: ElevatedButton.styleFrom(
-                                                backgroundColor: colorScheme.primary,
+                                                backgroundColor:
+                                                    colorScheme.primary,
                                                 shape: RoundedRectangleBorder(
-                                                  borderRadius: BorderRadius.circular(12),
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
                                                 ),
-                                                padding: const EdgeInsets.symmetric(
-                                                  horizontal: 20,
-                                                  vertical: 12,
-                                                ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 20,
+                                                      vertical: 12,
+                                                    ),
                                                 elevation: 3,
                                               ),
-                                              child: state.isTranslating
-                                                  ? SizedBox(
-                                                      width: 20,
-                                                      height: 20,
-                                                      child: CircularProgressIndicator(
-                                                        color: colorScheme.onPrimary,
-                                                        strokeWidth: 2,
+                                              child:
+                                                  state.isTranslating
+                                                      ? SizedBox(
+                                                        width: 20,
+                                                        height: 20,
+                                                        child:
+                                                            CircularProgressIndicator(
+                                                              color:
+                                                                  colorScheme
+                                                                      .onPrimary,
+                                                              strokeWidth: 2,
+                                                            ),
+                                                      )
+                                                      : Icon(
+                                                        Icons.translate_rounded,
+                                                        color:
+                                                            colorScheme
+                                                                .onPrimary,
+                                                        size: 20,
                                                       ),
-                                                    )
-                                                  : Icon(
-                                                      Icons.translate_rounded,
-                                                      color: colorScheme.onPrimary,
-                                                      size: 20,
-                                                    ),
                                             ),
                                           ],
                                         ),
@@ -856,7 +1009,9 @@ class _TextReaderPageState extends State<TextReaderPage>
                                     ],
                                   ),
 
-                                const SizedBox(height: 40), // Extra space at bottom
+                                const SizedBox(
+                                  height: 40,
+                                ), // Extra space at bottom
                               ],
                             ),
                           ),
@@ -868,31 +1023,33 @@ class _TextReaderPageState extends State<TextReaderPage>
               ),
             ],
           ),
-          
+
           // Floating Action Button for Manual Capture
-          floatingActionButton: _isPageActive &&
-                  !_isDisposing &&
-                  state.capturedImagePath == null &&
-                  cameraService.isCameraInitialized &&
-                  !state.isAnyProcessingActive
-              ? FloatingActionButton.extended(
-                  onPressed: state.takePictureAndProcessText,
-                  backgroundColor: colorScheme.primary,
-                  foregroundColor: colorScheme.onPrimary,
-                  elevation: 8,
-                  icon: const Icon(Icons.camera_alt_rounded),
-                  label: Text(
-                    'Capture',
-                    style: textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
+          floatingActionButton:
+              _isPageActive &&
+                      !_isDisposing &&
+                      state.capturedImagePath == null &&
+                      cameraService.isCameraInitialized &&
+                      !state.isAnyProcessingActive
+                  ? FloatingActionButton.extended(
+                    onPressed: state.takePictureAndProcessText,
+                    backgroundColor: colorScheme.primary,
+                    foregroundColor: colorScheme.onPrimary,
+                    elevation: 8,
+                    icon: const Icon(Icons.camera_alt_rounded),
+                    label: Text(
+                      'Capture',
+                      style: textTheme.labelLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                )
-              : null,
-          floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  )
+                  : null,
+          floatingActionButtonLocation:
+              FloatingActionButtonLocation.centerFloat,
         );
       },
     );

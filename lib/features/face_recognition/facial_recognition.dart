@@ -9,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:assist_lens/main.dart'; // For routeObserver
 import 'package:assist_lens/features/face_recognition/facial_recognition_state.dart';
 import 'package:assist_lens/core/services/camera_service.dart';
+// Import Database Helper
 
 class FacialRecognition extends StatefulWidget {
   final bool autoStartLive;
@@ -449,7 +450,7 @@ class _FacialRecognitionState extends State<FacialRecognition>
                         borderRadius: BorderRadius.circular(30),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
+                            color: Colors.black.withAlpha((0.2 * 255).round()),
                             blurRadius: 10,
                             spreadRadius: 2,
                           ),
