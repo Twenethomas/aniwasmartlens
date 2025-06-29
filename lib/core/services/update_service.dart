@@ -9,18 +9,17 @@ import 'package:logger/logger.dart';
 class UpdateService {
   final Logger _logger = Logger();
 
-  // Update this with your actual repository details
+  // Update API URL to use specific tag
   static const String GITHUB_API =
-      "https://api.github.com/repos/Twenethomas/aniwasmartlens/releases/latest";
+      "https://api.github.com/repos/Twenethomas/aniwasmartlens/releases/tags/v1.0.1";
+
   Future<void> checkAndInstallUpdate() async {
     try {
-      // Get current version
       PackageInfo packageInfo = await PackageInfo.fromPlatform();
       String currentVersion = packageInfo.version;
 
       _logger.i("Checking for updates. Current version: $currentVersion");
 
-      // Check latest release with minimal headers
       final response = await http.get(
         Uri.parse(GITHUB_API),
         headers: {
@@ -30,28 +29,20 @@ class UpdateService {
       );
 
       if (response.statusCode == 404) {
-        _logger.e(
-          "Repository or release not found. Please check the GitHub URL.",
-        );
-        throw Exception('Repository or release not found');
+        _logger.e("Release tag v1.0.1 not found");
+        throw Exception('Specific release not found');
       }
 
-      if (response.statusCode != 200) {
-        _logger.e("Failed to check updates: ${response.statusCode}");
-        throw Exception('Failed to check updates: ${response.statusCode}');
-      }
-
-      final releaseData = jsonDecode(response.body);
-      String latestVersion = releaseData['tag_name'].replaceAll('v', '');
-
-      _logger.i("Latest version available: $latestVersion");
-
-      if (isNewerVersion(currentVersion, latestVersion)) {
-        _logger.i("Update available. Downloading new version...");
-        String apkUrl = releaseData['assets'][0]['browser_download_url'];
-        await downloadAndInstallUpdate(apkUrl);
-      } else {
-        _logger.i("App is up to date");
+      if (response.statusCode == 200) {
+        final releaseData = jsonDecode(response.body);
+        final assets = releaseData['assets'] as List;
+        
+        if (assets.isNotEmpty) {
+          String apkUrl = assets[0]['browser_download_url'];
+          if (apkUrl.endsWith('.apk')) {
+            await downloadAndInstallUpdate(apkUrl);
+          }
+        }
       }
     } catch (e) {
       _logger.e("Update check failed: $e");
