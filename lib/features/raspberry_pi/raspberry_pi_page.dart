@@ -14,7 +14,8 @@ class RaspberryPiConnectPage extends StatefulWidget {
   State<RaspberryPiConnectPage> createState() => _RaspberryPiConnectPageState();
 }
 
-class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with TickerProviderStateMixin, RouteAware {
+class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage>
+    with TickerProviderStateMixin, RouteAware {
   final TextEditingController _ipController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   late AnimationController _pulseController;
@@ -68,26 +69,27 @@ class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with Ti
   @override
   void initState() {
     super.initState();
-    
+
     // Animation controllers
     _pulseController = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
     )..repeat(reverse: true);
-    
+
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-    
+
     _pulseAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-    
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),
-    );
-    
+
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _fadeController, curve: Curves.easeOut));
+
     _fadeController.forward();
   }
 
@@ -112,7 +114,8 @@ class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with Ti
         if (service.connectionStatus == RaspberryPiConnectionStatus.connected) {
           service.removeListener(statusListener);
           Navigator.of(context).pushReplacementNamed(AppRouter.raspberryPiView);
-        } else if (service.connectionStatus == RaspberryPiConnectionStatus.error) {
+        } else if (service.connectionStatus ==
+            RaspberryPiConnectionStatus.error) {
           service.removeListener(statusListener);
           _showErrorSnackBar(ipAddress);
         }
@@ -129,9 +132,7 @@ class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with Ti
           children: [
             Icon(Icons.error_outline, color: Colors.white),
             const SizedBox(width: 12),
-            Expanded(
-              child: Text('Failed to connect to Glasses at $ipAddress'),
-            ),
+            Expanded(child: Text('Failed to connect to Glasses at $ipAddress')),
           ],
         ),
         backgroundColor: Theme.of(context).colorScheme.error,
@@ -147,7 +148,8 @@ class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with Ti
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final piService = Provider.of<RaspberryPiService>(context);
-    final isConnecting = piService.connectionStatus == RaspberryPiConnectionStatus.connecting;
+    final isConnecting =
+        piService.connectionStatus == RaspberryPiConnectionStatus.connecting;
 
     return Scaffold(
       body: Container(
@@ -261,11 +263,14 @@ class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with Ti
                                     borderSide: BorderSide.none,
                                   ),
                                   filled: true,
-                                  fillColor: colorScheme.surfaceContainerHighest,
+                                  fillColor:
+                                      colorScheme.surfaceContainerHighest,
                                   prefixIcon: Container(
                                     margin: const EdgeInsets.all(8),
                                     decoration: BoxDecoration(
-                                      color: colorScheme.primary.withOpacity(0.1),
+                                      color: colorScheme.primary.withOpacity(
+                                        0.1,
+                                      ),
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Icon(
@@ -273,27 +278,33 @@ class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with Ti
                                       color: colorScheme.primary,
                                     ),
                                   ),
-                                  suffixIcon: _ipController.text.isNotEmpty
-                                      ? IconButton(
-                                          icon: Icon(
-                                            Icons.clear,
-                                            color: colorScheme.onSurfaceVariant,
-                                          ),
-                                          onPressed: () {
-                                            _ipController.clear();
-                                            setState(() {});
-                                          },
-                                        )
-                                      : null,
+                                  suffixIcon:
+                                      _ipController.text.isNotEmpty
+                                          ? IconButton(
+                                            icon: Icon(
+                                              Icons.clear,
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                            onPressed: () {
+                                              _ipController.clear();
+                                              setState(() {});
+                                            },
+                                          )
+                                          : null,
                                 ),
-                                keyboardType: TextInputType.numberWithOptions(decimal: true),
+                                keyboardType: TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
                                 style: textTheme.bodyLarge,
                                 onChanged: (value) => setState(() {}),
                                 validator: (value) {
                                   if (value == null || value.isEmpty) {
                                     return 'Please enter an IP address';
                                   }
-                                  final ipPattern = RegExp(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$");
+                                  final ipPattern = RegExp(
+                                    r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$",
+                                  );
                                   if (!ipPattern.hasMatch(value)) {
                                     return 'Enter a valid IP address format';
                                   }
@@ -311,53 +322,62 @@ class _RaspberryPiConnectPageState extends State<RaspberryPiConnectPage> with Ti
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: colorScheme.primary,
                                     foregroundColor: colorScheme.onPrimary,
-                                    disabledBackgroundColor: colorScheme.surfaceContainerHighest,
+                                    disabledBackgroundColor:
+                                        colorScheme.surfaceContainerHighest,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(16),
                                     ),
                                     elevation: isConnecting ? 0 : 4,
                                   ),
-                                  child: isConnecting
-                                      ? Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                valueColor: AlwaysStoppedAnimation<Color>(
-                                                  colorScheme.primary,
+                                  child:
+                                      isConnecting
+                                          ? Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              SizedBox(
+                                                width: 20,
+                                                height: 20,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  valueColor:
+                                                      AlwaysStoppedAnimation<
+                                                        Color
+                                                      >(colorScheme.primary),
                                                 ),
                                               ),
-                                            ),
-                                            const SizedBox(width: 16),
-                                            Text(
-                                              'Connecting...',
-                                              style: textTheme.labelLarge?.copyWith(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
+                                              const SizedBox(width: 16),
+                                              Text(
+                                                'Connecting...',
+                                                style: textTheme.labelLarge
+                                                    ?.copyWith(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
                                               ),
-                                            ),
-                                          ],
-                                        )
-                                      : Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
-                                          children: [
-                                            Icon(
-                                              Icons.link_rounded,
-                                              size: 24,
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Text(
-                                              'Connect to Glasses',
-                                              style: textTheme.labelLarge?.copyWith(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
+                                            ],
+                                          )
+                                          : Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(
+                                                Icons.link_rounded,
+                                                size: 24,
                                               ),
-                                            ),
-                                          ],
-                                        ),
+                                              const SizedBox(width: 12),
+                                              Text(
+                                                'Connect to Glasses',
+                                                style: textTheme.labelLarge
+                                                    ?.copyWith(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                              ),
+                                            ],
+                                          ),
                                 ),
                               ),
                             ],

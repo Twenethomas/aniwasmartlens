@@ -3,6 +3,8 @@ import 'package:assist_lens/core/routing/app_router.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import '../../state/app_state.dart';
 import '../aniwa_chat/state/chat_state.dart';
 import '../../main.dart'; // For ThemeProvider
@@ -17,6 +19,56 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> with RouteAware {
   final TextEditingController _nameController = TextEditingController();
   late ChatState _chatState;
+
+  Future<void> _pickImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    
+    if (image != null) {
+      final appState = Provider.of<AppState>(context, listen: false);
+      appState.userImagePath = image.path;
+    }
+  }
+
+  Widget _buildProfileImage(AppState appState, ColorScheme colorScheme) {
+    return GestureDetector(
+      onTap: _pickImage,
+      child: Stack(
+        children: [
+          CircleAvatar(
+            radius: 50,
+            backgroundColor: colorScheme.primary.withOpacity(0.2),
+            backgroundImage: appState.userImagePath != null
+                ? FileImage(File(appState.userImagePath!))
+                : null,
+            child: appState.userImagePath == null
+                ? Icon(
+                    Icons.person_rounded,
+                    size: 60,
+                    color: colorScheme.primary,
+                  )
+                : null,
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: colorScheme.primary,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.camera_alt,
+                size: 20,
+                color: colorScheme.onPrimary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void didChangeDependencies() {
@@ -84,15 +136,7 @@ class _ProfilePageState extends State<ProfilePage> with RouteAware {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            CircleAvatar(
-              radius: 50,
-              backgroundColor: colorScheme.primary.withOpacity(0.2),
-              child: Icon(
-                Icons.person_rounded,
-                size: 60,
-                color: colorScheme.primary,
-              ),
-            ),
+            _buildProfileImage(appState, colorScheme),
             const SizedBox(height: 20),
             GestureDetector(
               onTap: () => _showEditNameDialog(context, appState),

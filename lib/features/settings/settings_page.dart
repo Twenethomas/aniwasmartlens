@@ -1,13 +1,14 @@
-// lib/features/settings/settings_page.dart
-import 'package:assist_lens/core/services/chat_service.dart';
 import 'package:assist_lens/core/services/update_service.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'package:assist_lens/features/settings/state/settings_state.dart';
-import 'package:assist_lens/main.dart'; // For ThemeProvider
-import 'package:assist_lens/core/routing/app_router.dart';
-import 'package:assist_lens/features/aniwa_chat/state/chat_state.dart'; // For voice commands
+import 'package:google_fonts/google_fonts.dart';
+import 'package:logger/logger.dart';
+
+import '../../core/routing/app_router.dart';
+import '../../state/app_state.dart';
+import '../aniwa_chat/state/chat_state.dart';
+import './state/settings_state.dart';
+import '../../main.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -16,14 +17,27 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> with RouteAware {
+class _SettingsPageState extends State<SettingsPage>
+    with WidgetsBindingObserver, RouteAware {
+  final Logger _logger = logger;
+  bool _isBlindModeEnabled = false;
   late ChatState _chatState;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _chatState = Provider.of<ChatState>(context, listen: false);
     routeObserver.subscribe(this, ModalRoute.of(context)! as PageRoute);
+
+    setState(() {
+      _isBlindModeEnabled = _chatState.isBlindModeEnabled;
+    });
   }
 
   @override
@@ -32,33 +46,36 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
     super.dispose();
   }
 
-  bool _isBlindModeEnabled =
-      false; // Add this as a state variable in your State class
-
-  @override
-  void initState() {
-    super.initState();
-    // Optionally, load initial value from app state or provider
-    _isBlindModeEnabled = context.read<ChatState>().isBlindModeEnabled;
-  }
-
-  // --- RouteAware Methods for Voice Command Lifecycle ---
   @override
   void didPush() {
+    _logger.d('SettingsPage: Page pushed');
     _chatState.updateCurrentRoute(AppRouter.settings);
+    _chatState.setChatPageActive(true);
     _chatState.resume();
   }
 
   @override
   void didPopNext() {
+    _logger.d('SettingsPage: Returning to page');
     _chatState.updateCurrentRoute(AppRouter.settings);
+    _chatState.setChatPageActive(true);
     _chatState.resume();
   }
 
   @override
-  void didPushNext() => _chatState.pause();
+  void didPushNext() {
+    _logger.d('SettingsPage: Page covered');
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
+  }
+
   @override
-  void didPop() => _chatState.pause();
+  void didPop() {
+    _logger.d('SettingsPage: Page popped');
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -77,11 +94,16 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
           return ListView(
             padding: const EdgeInsets.all(16.0),
             children: [
+              _buildSectionHeader(context, 'App Settings'),
+              _buildBlindModeTile(context),
+              _buildGeminiSwitch(context),
+              const Divider(height: 32),
+
               _buildSectionHeader(context, 'Appearance'),
               _buildThemeSelector(context),
               const Divider(height: 32),
 
-              _buildSectionHeader(context, 'Speech Output'),
+              _buildSectionHeader(context, 'Speech Settings'),
               _buildSliderTile(
                 context: context,
                 label: 'Volume',
@@ -113,12 +135,13 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
                 divisions: 15,
               ),
               const Divider(height: 32),
-              _buildBlindModeTile(context),
-              _buildSectionHeader(context, 'Data Management'),
+
+              _buildSectionHeader(context, 'Updates & Data'),
+              _buildUpdateTile(context),
               _buildActionTile(
                 context: context,
                 title: 'Clear Chat History',
-                subtitle: 'Deletes all saved conversations.',
+                subtitle: 'Deletes all saved conversations',
                 icon: Icons.delete_sweep_rounded,
                 onTap:
                     () => _showConfirmationDialog(
@@ -128,43 +151,24 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
                       onConfirm: () {
                         settingsState.clearChatHistory();
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Chat history cleared.'),
-                          ),
+                          const SnackBar(content: Text('Chat history cleared')),
                         );
                       },
                     ),
               ),
-              ElevatedButton(
-                child: Text('Check for Updates'),
-                onPressed: () async {
-                  try {
-                    final updateService = UpdateService();
-                    await updateService.checkAndInstallUpdate();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Checking for updates...')),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Update failed: $e')),
-                    );
-                  }
-                },
-              ),
               _buildActionTile(
                 context: context,
                 title: 'Reset App',
-                subtitle: 'Resets all settings and logs you out.',
+                subtitle: 'Resets all settings and logs you out',
                 icon: Icons.restart_alt_rounded,
                 onTap:
                     () => _showConfirmationDialog(
                       context,
                       title: 'Reset App?',
                       content:
-                          'This will clear all data and return to the onboarding screen. This action cannot be undone.',
+                          'This will clear all data and return to onboarding. This cannot be undone.',
                       onConfirm: () async {
                         await settingsState.resetApp();
-                        // Navigate to onboarding and remove all previous routes
                         if (context.mounted) {
                           Navigator.of(
                             context,
@@ -185,41 +189,32 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
     );
   }
 
-  Widget _buildBlindModeTile(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+  Widget _buildGeminiSwitch(BuildContext context) {
     return Card(
       elevation: 2,
       child: SwitchListTile(
-        title: Text('Blind Mode'),
-        subtitle: Text(
-          'Enable voice-only mode and enhanced accessibility features.',
-        ),
-        value: _isBlindModeEnabled,
-        activeColor: colorScheme.primary,
+        title: const Text('Enable Gemini 2.0'),
+        subtitle: const Text('Use enhanced AI model for all interactions'),
+        value: Provider.of<AppState>(context).isGemini2Enabled,
+        activeColor: Theme.of(context).colorScheme.primary,
         onChanged: (value) {
-          setState(() {
-            _isBlindModeEnabled = value;
-            // Update ChatState and ChatService
-            final chatState = context.read<ChatState>();
-            if (value) {
-              chatState.enableBlindMode();
-            } else {
-              chatState.disableBlindMode();
-            }
-            context.read<ChatService>().updateUserInfo(isBlindMode: value);
-          });
+          final appState = Provider.of<AppState>(context, listen: false);
+          appState.setGemini2Enabled(value);
         },
       ),
     );
   }
 
   Widget _buildSectionHeader(BuildContext context, String title) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
+      padding: const EdgeInsets.only(top: 24.0, bottom: 8.0),
       child: Text(
         title,
-        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-          color: Theme.of(context).colorScheme.primary,
+        style: textTheme.titleMedium?.copyWith(
+          color: colorScheme.primary,
           fontWeight: FontWeight.bold,
         ),
       ),
@@ -227,42 +222,60 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
   }
 
   Widget _buildThemeSelector(BuildContext context) {
-    final themeProvider = ThemeProvider.of(context);
+    final appState = Provider.of<AppState>(context);
     final colorScheme = Theme.of(context).colorScheme;
 
     return Card(
       elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(8.0),
-        child: SegmentedButton<ThemeMode>(
-          segments: const [
-            ButtonSegment(
-              value: ThemeMode.light,
-              label: Text('Light'),
-              icon: Icon(Icons.light_mode),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildThemeButton(
+              context,
+              'Light',
+              ThemeMode.light,
+              appState.currentThemeMode == ThemeMode.light,
             ),
-            ButtonSegment(
-              value: ThemeMode.dark,
-              label: Text('Dark'),
-              icon: Icon(Icons.dark_mode),
+            _buildThemeButton(
+              context,
+              'Dark',
+              ThemeMode.dark,
+              appState.currentThemeMode == ThemeMode.dark,
             ),
-            ButtonSegment(
-              value: ThemeMode.system,
-              label: Text('System'),
-              icon: Icon(Icons.settings_system_daydream),
+            _buildThemeButton(
+              context,
+              'System',
+              ThemeMode.system,
+              appState.currentThemeMode == ThemeMode.system,
             ),
           ],
-          selected: {themeProvider.themeMode},
-          onSelectionChanged: (Set<ThemeMode> newSelection) {
-            themeProvider.toggleTheme();
-          },
-          style: SegmentedButton.styleFrom(
-            backgroundColor: colorScheme.surfaceContainer,
-            foregroundColor: colorScheme.onSurfaceVariant,
-            selectedBackgroundColor: colorScheme.primary,
-            selectedForegroundColor: colorScheme.onPrimary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildThemeButton(
+    BuildContext context,
+    String label,
+    ThemeMode themeMode,
+    bool isSelected,
+  ) {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return InkWell(
+      onTap: () => appState.setThemeMode(themeMode),
+      child: Chip(
+        label: Text(
+          label,
+          style: textTheme.bodyMedium?.copyWith(
+            color: isSelected ? colorScheme.onPrimary : colorScheme.onSurface,
           ),
         ),
+        backgroundColor: isSelected ? colorScheme.primary : colorScheme.surface,
       ),
     );
   }
@@ -273,36 +286,38 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
     required double value,
     required IconData icon,
     required ValueChanged<double> onChanged,
-    double min = 0.0,
-    double max = 1.0,
+    required double min,
+    required double max,
     int? divisions,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
     return Card(
       elevation: 2,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-        child: Row(
+        padding: const EdgeInsets.all(8.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: colorScheme.primary),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: Theme.of(context).textTheme.titleMedium),
-                  Slider(
-                    value: value,
-                    min: min,
-                    max: max,
-                    divisions: divisions,
-                    label: value.toStringAsFixed(2),
-                    onChanged: onChanged,
-                    activeColor: colorScheme.primary,
-                    inactiveColor: colorScheme.primary.withOpacity(0.3),
-                  ),
-                ],
+            ListTile(
+              leading: Icon(icon, color: colorScheme.primary),
+              title: Text(
+                label,
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
+                ),
               ),
+            ),
+            Slider(
+              value: value,
+              min: min,
+              max: max,
+              divisions: divisions,
+              activeColor: colorScheme.secondary,
+              inactiveColor: colorScheme.onSurface.withAlpha(77),
+              onChanged: onChanged,
             ),
           ],
         ),
@@ -319,6 +334,7 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
     bool isDestructive = false,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
     final titleColor =
         isDestructive ? colorScheme.error : colorScheme.onSurface;
     final iconColor = isDestructive ? colorScheme.error : colorScheme.primary;
@@ -333,7 +349,7 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
         ),
         subtitle: Text(
           subtitle,
-          style: TextStyle(color: titleColor.withOpacity(0.7)),
+          style: TextStyle(color: titleColor.withAlpha(179)),
         ),
         onTap: onTap,
       ),
@@ -346,30 +362,149 @@ class _SettingsPageState extends State<SettingsPage> with RouteAware {
     required String content,
     required VoidCallback onConfirm,
   }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
-          title: Text(title),
-          content: Text(content),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(),
+          backgroundColor: colorScheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          title: Text(
+            title,
+            style: textTheme.headlineSmall?.copyWith(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.bold,
             ),
+          ),
+          content: Text(
+            content,
+            style: textTheme.bodyLarge?.copyWith(color: colorScheme.onSurface),
+          ),
+          actions: [
             TextButton(
-              child: Text(
-                'Confirm',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
-                onConfirm();
               },
+              child: Text(
+                'Cancel',
+                style: TextStyle(color: colorScheme.onSurface),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                onConfirm();
+                Navigator.of(dialogContext).pop();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colorScheme.error,
+                foregroundColor: colorScheme.onError,
+              ),
+              child: const Text('Confirm'),
             ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildBlindModeTile(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 2,
+      child: SwitchListTile(
+        title: const Text('Blind Mode'),
+        subtitle: const Text(
+          'Enable voice-only mode and enhanced accessibility features.',
+        ),
+        value: _isBlindModeEnabled,
+        activeColor: colorScheme.primary,
+        onChanged: (value) {
+          setState(() {
+            _isBlindModeEnabled = value;
+            if (value) {
+              _chatState.enableBlindMode();
+            } else {
+              _chatState.disableBlindMode();
+            }
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _buildUpdateTile(BuildContext context) {
+    return Card(
+      elevation: 2,
+      child: ListTile(
+        leading: const Icon(Icons.system_update_rounded, color: Colors.blue),
+        title: const Text(
+          'Check for Updates',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: const Text('Check for new app versions and install updates.'),
+        onTap: () => _checkForUpdates(context),
+      ),
+    );
+  }
+
+  Future<void> _checkForUpdates(BuildContext context) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) => const UpdateProgressDialog(),
+    );
+
+    try {
+      final updateService = UpdateService();
+      final hasUpdate = await updateService.checkAndInstallUpdate();
+
+      if (context.mounted) {
+        Navigator.of(context).pop(); // Dismiss progress dialog
+
+        if (hasUpdate) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Update downloaded. Please restart the app.'),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('App is up to date')));
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.of(context).pop(); // Dismiss progress dialog
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Update check failed: $e')));
+      }
+    }
+  }
+}
+
+class UpdateProgressDialog extends StatelessWidget {
+  const UpdateProgressDialog({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(
+            'Checking for updates...',
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+        ],
+      ),
     );
   }
 }

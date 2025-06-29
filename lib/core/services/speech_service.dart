@@ -243,7 +243,14 @@ class SpeechService extends ChangeNotifier {
 
     _logger.i("TTS: Initialized successfully.");
   }
-
+  String _sanitizeText(String text) {
+      return text
+          .replaceAll(RegExp(r'<[^>]*>'), '') // Remove XML/SSML tags
+          .replaceAll('&lt;', '<')
+          .replaceAll('&gt;', '>')
+          .replaceAll('&amp;', '&')
+          .trim();
+    }
   Future<void> speak(String text) async {
     if (text.isEmpty) {
       _logger.w("TTS: Attempted to speak empty text.");
@@ -273,7 +280,7 @@ class SpeechService extends ChangeNotifier {
       ); // Ensure mic is released from prior TTS
     }
 
-    _speakingText = text;
+    _speakingText = _sanitizeText(text);
     _speakingTextController.add(text);
     _logger.i("TTS: Speaking: '$text'");
 
