@@ -1,29 +1,23 @@
-import 'dart:async'; // For StreamSubscription
-import 'dart:io';
-import 'dart:typed_data'; // Added for Uint8List and WriteBuffer
-
-import 'package:assist_lens/main.dart';
-import 'package:flutter/foundation.dart' as ui;
+// lib/features/navigation/active_navigation_screen.dart
+import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
-import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart';
+import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:geocoding/geocoding.dart' as geocoding;
-import 'package:logger/logger.dart';
-import 'package:vibration/vibration.dart';
 import 'package:latlong2/latlong.dart' as latlong2;
+import 'package:logger/Logger.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import 'package:vibration/vibration.dart';
 import 'package:assist_lens/core/services/speech_service.dart';
+import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+import '../../core/routing/app_router.dart';
+import '../aniwa_chat/state/chat_state.dart';
+import '../../main.dart';
 
 class ActiveNavigationScreen extends StatefulWidget {
-  final Position initialPosition;
-  final latlong2.LatLng destination;
-
-  const ActiveNavigationScreen({
-    super.key,
-    required this.initialPosition,
-    required this.destination,
-  });
+  const ActiveNavigationScreen({super.key});
 
   @override
   State<ActiveNavigationScreen> createState() => _ActiveNavigationScreenState();
@@ -31,698 +25,742 @@ class ActiveNavigationScreen extends StatefulWidget {
 
 class _ActiveNavigationScreenState extends State<ActiveNavigationScreen>
     with WidgetsBindingObserver, RouteAware {
-  CameraController? _cameraController;
-  ObjectDetector? _objectDetector;
-  List<DetectedObject> _detectedObjects = [];
-  Size _imageSize = Size.zero;
-  final _throttler = _Throttler(milliseconds: 500);
   final Logger _logger = Logger();
-  final SpeechService _speechService = SpeechService();
+  late SpeechService _speechService;
 
-  late Position _currentPosition;
-  StreamSubscription<Position>? _positionStreamSubscription;
+  // Navigation data
+  Position? _currentPosition;
+  latlong2.LatLng? _destination;
+  String _currentAddress = '';
+  String _destinationAddress = '';
+
+  // Location tracking
+  StreamSubscription<Position>? _positionStream;
+  StreamSubscription<MagnetometerEvent>? _magnetometerStream;
+
+  // Navigation state
   double _distanceToDestination = 0.0;
-  String _currentAddress = 'Loading address...';
-  String _destinationAddress = 'Loading destination...';
+  double _bearingToDestination = 0.0;
+  double _currentHeading = 0.0;
+  double _speed = 0.0;
+  String _navigationStatus = 'Initializing...';
 
-  bool _isCameraInitialized = false;
-  bool _isDisposed = false; // Flag to track if the widget's state is disposed
+  // Audio guidance
+  Timer? _guidanceTimer;
+  Timer? _proximityTimer;
+
+  // Haptic feedback
+  bool _isVibrationAvailable = false;
+
+  // Navigation settings
+  double _guidanceIntervalSeconds = 10.0;
+  final double _proximityAlertDistance = 50.0;
+  bool _isNavigationActive = true;
+
+  // Gesture detection
+  late ChatState _chatState;
+  final GlobalKey _screenKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _currentPosition = widget.initialPosition;
-    _initObjectDetector();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _initializeCamera();
-      }
+      _checkVibrationSupport();
     });
-    _startLocationUpdates();
-    _resolveDestinationAddress();
   }
+
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final ModalRoute? route = ModalRoute.of(context);
-    if (route is PageRoute) {
-      routeObserver.subscribe(this, route);
-    }
+    _speechService = context.read<SpeechService>();
+    _chatState = context.read<ChatState>();
+    routeObserver.subscribe(this, ModalRoute.of(context)! as PageRoute);
+    _initializeNavigation();
+    _checkVibrationSupport();
   }
 
   @override
   void didPush() {
-    _logger.i(
-      "ActiveNavigationScreen: didPush - Page is active. Re-initializing camera and resuming location.",
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _initializeCamera();
-        _startLocationUpdates(); // Ensure location updates resume
-      }
-    });
+    _logger.i("ActiveNavigationScreen: didPush - Page is active.");
+    _chatState.updateCurrentRoute(AppRouter.activeNavigation);
+    _chatState.setChatPageActive(true);
+    _chatState.resume();
     super.didPush();
   }
 
   @override
   void didPopNext() {
-    _logger.i(
-      "ActiveNavigationScreen: didPopNext - Returning to page. Re-initializing camera and resuming location.",
-    );
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _initializeCamera();
-        _startLocationUpdates(); // Ensure location updates resume
-      }
-    });
+    _logger.i("ActiveNavigationScreen: didPopNext - Returning to page.");
+    _chatState.updateCurrentRoute(AppRouter.activeNavigation);
+    _chatState.setChatPageActive(true);
+    _chatState.resume();
     super.didPopNext();
   }
 
   @override
   void didPushNext() {
     _logger.i(
-      "ActiveNavigationScreen: didPushNext - Navigating away from page. Disposing camera and stopping location.",
+      "ActiveNavigationScreen: didPushNext - Navigating away from page.",
     );
-    _disposeCamera();
-    _positionStreamSubscription?.cancel();
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
     super.didPushNext();
   }
 
   @override
   void didPop() {
-    _logger.i(
-      "ActiveNavigationScreen: didPop - Page is being popped. Disposing camera and stopping location.",
-    );
-    _disposeCamera();
-    _positionStreamSubscription?.cancel();
+    _logger.i("ActiveNavigationScreen: didPop - Page is being popped.");
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
     super.didPop();
   }
 
-  void _initObjectDetector() {
-    _objectDetector = ObjectDetector(
-      options: ObjectDetectorOptions(
-        mode: DetectionMode.stream,
-        classifyObjects: true,
-        multipleObjects: true,
-      ),
-    );
+  Future<void> _checkVibrationSupport() async {
+    _isVibrationAvailable = await Vibration.hasVibrator() ?? false;
   }
 
-  Future<void> _initializeCamera() async {
-    if (!mounted || _isDisposed) {
-      // Added _isDisposed check
-      _logger.w(
-        "Widget not mounted or disposed during camera initialization attempt. Aborting.",
-      );
-      return;
-    }
-    // Prevent re-initialization if already active and initialized.
-    if (_isCameraInitialized &&
-        _cameraController != null &&
-        _cameraController!.value.isInitialized) {
-      _logger.i(
-        "Camera already initialized/active and streaming, skipping re-initialization.",
-      );
-      // Ensure it starts streaming if it's initialized but not currently
-      if (!_cameraController!.value.isStreamingImages) {
-        _cameraController!.startImageStream((CameraImage image) {
-          _throttler.run(() {
-            _processCameraImage(image);
-          });
-        });
-      }
+  void _initializeNavigation() {
+    // Attempt to retrieve arguments
+    final Map<String, dynamic>? args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+
+    if (args == null) {
+      _logger.e('ActiveNavigationScreen: Navigation arguments are NULL!');
+      _speakAndFinish('Navigation data not found. Returning to map.');
       return;
     }
 
-    _logger.i("Initializing camera for ActiveNavigationScreen...");
-    setState(() {
-      _isCameraInitialized = false;
-      _isDisposed = false; // Reset disposed flag on re-initialization attempt
-    });
+    _logger.i(
+      'ActiveNavigationScreen: Arguments received: $args',
+    ); // Log received arguments
 
-    await Future.delayed(
-      const Duration(milliseconds: 500),
-    ); // Delay to allow previous resources to clear
+    try {
+      // Cast with null-aware operators and provide default values
+      _currentPosition = args['initialPosition'] as Position?;
+      _destination = args['destination'] as latlong2.LatLng?;
+      _currentAddress = args['currentAddress'] as String? ?? '';
+      _destinationAddress = args['destinationAddress'] as String? ?? '';
 
-    final status =
-        await Permission.camera
-            .request(); // Request camera permission explicitly
-    if (status.isGranted) {
-      final cameras = await availableCameras();
-      if (cameras.isEmpty) {
-        _logger.e("No cameras found for ActiveNavigationScreen.");
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('No cameras found.')));
-        }
-        setState(() {
-          // Ensure UI updates if no cameras found
-          _isCameraInitialized = false;
-        });
+      // Perform more explicit checks for null data
+      if (_currentPosition == null) {
+        _logger.e(
+          'ActiveNavigationScreen: "initialPosition" is null in arguments.',
+        );
+        _speakAndFinish('Invalid starting location. Returning to map.');
         return;
       }
-
-      // Dispose existing controller if it exists and is initialized
-      if (_cameraController != null) {
-        await _disposeCamera(
-          shouldSetState: false,
-        ); // Use robust dispose, but don't setState here
-        _cameraController = null; // Ensure nullified after disposal
-      }
-
-      _cameraController = CameraController(
-        cameras.firstWhere(
-          // Prefer back camera for navigation
-          (cam) => cam.lensDirection == CameraLensDirection.back,
-          orElse: () => cameras.first,
-        ),
-        ResolutionPreset.medium,
-        enableAudio: false,
-        imageFormatGroup:
-            Platform.isAndroid
-                ? ImageFormatGroup.nv21
-                : ImageFormatGroup.bgra8888, // Optimal for ML Kit processing
-      );
-
-      try {
-        await _cameraController!.initialize();
-        if (!mounted || _isDisposed) {
-          // Check mounted and disposed after async op
-          _logger.w(
-            "ActiveNavigationScreen unmounted or disposed during camera initialization. Disposing new controller.",
-          );
-          await _cameraController!.dispose();
-          _cameraController = null;
-          return;
-        }
-        setState(() {
-          _isCameraInitialized = true;
-          _isDisposed = false;
-        });
-        _logger.i(
-          "Camera initialized successfully for ActiveNavigationScreen.",
-        );
-
-        // Start image stream for live object detection if not already streaming
-        if (!_cameraController!.value.isStreamingImages) {
-          _cameraController!.startImageStream((CameraImage image) {
-            _throttler.run(() {
-              _processCameraImage(image);
-            });
-          });
-        }
-      } on CameraException catch (e) {
+      if (_destination == null) {
         _logger.e(
-          "Camera initialization failed for ActiveNavigationScreen: ${e.code}: ${e.description}",
+          'ActiveNavigationScreen: "destination" is null in arguments.',
         );
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Camera error: ${e.description}')),
-          );
-          setState(() {
-            _isCameraInitialized = false; // Set to false on error
-          });
-        }
-        // Ensure controller is nullified on error
-        if (_cameraController != null) {
-          await _cameraController?.dispose();
-          _cameraController = null;
-        }
-      } catch (e, st) {
-        _logger.e(
-          "Unexpected error during camera init for ActiveNavigationScreen: $e",
-          error: e,
-          stackTrace: st,
+        _speakAndFinish('Invalid destination. Returning to map.');
+        return;
+      }
+      if (_currentAddress.isEmpty) {
+        _logger.w('ActiveNavigationScreen: "currentAddress" is empty or null.');
+      }
+      if (_destinationAddress.isEmpty) {
+        _logger.w(
+          'ActiveNavigationScreen: "destinationAddress" is empty or null.',
         );
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'An unexpected error occurred during camera setup.',
-              ),
-            ),
-          );
-          setState(() {
-            _isCameraInitialized = false; // Set to false on error
-          });
-        }
-        if (_cameraController != null) {
-          await _cameraController?.dispose();
-          _cameraController = null;
-        }
       }
-    } else {
-      _logger.w("Camera permission denied for ActiveNavigationScreen.");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Camera permission denied.')),
-        );
-        setState(() {
-          _isCameraInitialized = false;
-        });
-      }
-    }
-  }
 
-  Future<void> _processCameraImage(CameraImage image) async {
-    if (!mounted ||
-        _objectDetector == null ||
-        _isDisposed ||
-        _cameraController == null) {
-      return; // Added _cameraController null check
-    }
-
-    if (_imageSize == Size.zero) {
-      _imageSize = Size(image.width.toDouble(), image.height.toDouble());
-    }
-
-    // Determine rotation using more robust logic from other files
-    final InputImageRotation rotation;
-    if (Platform.isIOS) {
-      rotation =
-          InputImageRotationValue.fromRawValue(
-            _cameraController!.description.sensorOrientation,
-          )!;
-    } else if (Platform.isAndroid) {
-      int rotationCompensation =
-          _cameraController!.description.sensorOrientation;
-      if (_cameraController!.description.lensDirection ==
-          CameraLensDirection.front) {
-        rotationCompensation = (360 - rotationCompensation) % 360;
-      }
-      rotation = InputImageRotationValue.fromRawValue(rotationCompensation)!;
-    } else {
-      rotation = InputImageRotation.rotation0deg;
-    }
-
-    final InputImage inputImage = InputImage.fromBytes(
-      bytes: _concatenatePlanes(
-        image.planes,
-      ), // Use helper to concatenate planes
-      metadata: InputImageMetadata(
-        size: _imageSize,
-        rotation: rotation,
-        format:
-            Platform.isAndroid
-                ? InputImageFormat.nv21
-                : InputImageFormat.bgra8888, // Specify format
-        bytesPerRow: image.planes[0].bytesPerRow,
-      ),
-    );
-
-    try {
-      final List<DetectedObject> objects = await _objectDetector!.processImage(
-        inputImage,
-      );
-      if (mounted) {
-        setState(() {
-          _detectedObjects = objects;
-        });
-      }
-    } catch (e) {
-      _logger.e("Object detection failed in navigation: $e");
-    }
-  }
-
-  // Helper to concatenate image planes into a single Uint8List for ML Kit
-  Uint8List _concatenatePlanes(List<Plane> planes) {
-    final ui.WriteBuffer allBytes = ui.WriteBuffer();
-    for (Plane plane in planes) {
-      allBytes.putUint8List(plane.bytes);
-    }
-    return allBytes.done().buffer.asUint8List();
-  }
-
-  // Robust dispose method
-  Future<void> _disposeCamera({bool shouldSetState = true}) async {
-    if (_cameraController == null || _isDisposed) {
-      _logger.d(
-        "Camera controller is already null or disposed. Skipping disposal.",
-      );
-      return;
-    }
-    _logger.i("Disposing camera controller for ActiveNavigationScreen.");
-    _isDisposed = true; // Mark as disposed immediately
-
-    try {
-      if (_cameraController!.value.isStreamingImages) {
-        await _cameraController!.stopImageStream();
-      }
-      await _cameraController!.dispose();
-      _cameraController = null;
       _logger.i(
-        "Camera controller for ActiveNavigationScreen successfully disposed.",
+        'ActiveNavigationScreen: Navigation data parsed successfully. '
+        'Current Pos: (${_currentPosition!.latitude}, ${_currentPosition!.longitude}) '
+        'Destination: (${_destination!.latitude}, ${_destination!.longitude}) '
+        'Current Address: $_currentAddress '
+        'Destination Address: $_destinationAddress',
       );
-    } on CameraException catch (e, st) {
-      _logger.e(
-        'Error disposing camera: ${e.description}',
-        error: e,
-        stackTrace: st,
-      );
+
+      _startNavigationGuidance();
     } catch (e, st) {
       _logger.e(
-        'Unexpected error during camera dispose: $e',
+        'ActiveNavigationScreen: Error parsing specific navigation arguments: $e',
         error: e,
         stackTrace: st,
       );
-    } finally {
-      if (mounted && shouldSetState) {
-        setState(() {
-          _isCameraInitialized = false;
-          _detectedObjects = []; // Clear objects
-          _imageSize = Size.zero; // Reset image size
-        });
-      }
+      _speakAndFinish('Failed to process navigation data. Returning to map.');
     }
   }
 
-  Future<void> _startLocationUpdates() async {
-    final permission = await Geolocator.requestPermission();
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      _logger.e("Location permissions denied.");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Location permissions denied.')),
-        );
-      }
-      return;
-    }
+  void _startNavigationGuidance() {
+    _calculateNavigationData();
+    _startLocationTracking();
+    _startCompassTracking();
+    _startGuidanceTimer();
 
-    _positionStreamSubscription?.cancel(); // Cancel any existing subscription
+    _speakInitialGuidance();
+  }
 
-    _positionStreamSubscription = Geolocator.getPositionStream(
+  void _speakInitialGuidance() {
+    final distance = _formatDistance(_distanceToDestination);
+    final direction = _getCardinalDirection(_bearingToDestination);
+
+    _speechService.speak(
+      'Navigation started to $_destinationAddress. '
+      'Distance: $distance. '
+      'Direction: $direction. '
+      'Tap screen for current status. '
+      'Swipe up for settings. '
+      'Swipe down to end navigation.',
+    );
+  }
+
+  void _startLocationTracking() {
+    _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
+        distanceFilter: 2,
       ),
     ).listen(
       (Position position) {
-        if (mounted) {
-          setState(() {
-            _currentPosition = position;
-            _distanceToDestination = Geolocator.distanceBetween(
-              _currentPosition.latitude,
-              _currentPosition.longitude,
-              widget.destination.latitude,
-              widget.destination.longitude,
-            );
-          });
-          _resolveCurrentAddress(position);
-          _provideNavigationGuidance();
-        }
+        if (!_isNavigationActive) return;
+
+        _currentPosition = position;
+        _speed = position.speed;
+        _calculateNavigationData();
+        _checkProximityAlerts();
+
+        setState(() {
+          _navigationStatus = _getNavigationStatus();
+        });
       },
-      onError: (e) {
-        _logger.e("Error getting location stream: $e");
-        _speechService.speak(
-          "Failed to get your current location. Please check your device settings.",
-        );
+      onError: (error) {
+        _logger.e('Location tracking error: $error');
+        _speechService.speak('Location tracking error. Please check your GPS.');
       },
     );
   }
 
-  Future<void> _resolveCurrentAddress(Position position) async {
-    try {
-      List<geocoding.Placemark> placemarks = await geocoding
-          .placemarkFromCoordinates(position.latitude, position.longitude);
-      if (placemarks.isNotEmpty && mounted) {
-        final placemark = placemarks.first;
-        setState(() {
-          _currentAddress =
-              '${placemark.street}, ${placemark.locality}, ${placemark.country}';
-        });
-      }
-    } catch (e) {
-      _logger.e("Error resolving current address: $e");
-      if (mounted) {
-        setState(() {
-          _currentAddress = 'Address not found.';
-        });
-      }
+  void _startCompassTracking() {
+    _magnetometerStream = magnetometerEvents.listen((MagnetometerEvent event) {
+      if (!_isNavigationActive) return;
+
+      double heading = math.atan2(event.y, event.x) * (180 / math.pi);
+      if (heading < 0) heading += 360;
+
+      _currentHeading = heading;
+      setState(() {});
+    });
+  }
+
+  void _calculateNavigationData() {
+    if (_currentPosition == null || _destination == null) return;
+
+    _distanceToDestination = Geolocator.distanceBetween(
+      _currentPosition!.latitude,
+      _currentPosition!.longitude,
+      _destination!.latitude,
+      _destination!.longitude,
+    );
+
+    _bearingToDestination = Geolocator.bearingBetween(
+      _currentPosition!.latitude,
+      _currentPosition!.longitude,
+      _destination!.latitude,
+      _destination!.longitude,
+    );
+
+    if (_bearingToDestination < 0) {
+      _bearingToDestination += 360;
     }
   }
 
-  Future<void> _resolveDestinationAddress() async {
-    try {
-      List<geocoding.Placemark> placemarks = await geocoding
-          .placemarkFromCoordinates(
-            widget.destination.latitude,
-            widget.destination.longitude,
-          );
-      if (placemarks.isNotEmpty && mounted) {
-        final placemark = placemarks.first;
-        setState(() {
-          _destinationAddress =
-              '${placemark.street}, ${placemark.locality}, ${placemark.country}';
-        });
-      }
-    } catch (e) {
-      _logger.e("Error resolving destination address: $e");
-      if (mounted) {
-        setState(() {
-          _destinationAddress = 'Destination address not found.';
-        });
-      }
-    }
+  void _startGuidanceTimer() {
+    _guidanceTimer = Timer.periodic(
+      Duration(seconds: _guidanceIntervalSeconds.round()),
+      (timer) {
+        if (!_isNavigationActive) return;
+        _provideNavigationGuidance();
+      },
+    );
   }
 
   void _provideNavigationGuidance() {
-    if (_distanceToDestination < 50) {
-      _speechService.speak("You have arrived at your destination.");
-      Vibration.vibrate(duration: 500);
-      _stopNavigation();
-    } else if (_distanceToDestination < 200 && _distanceToDestination >= 50) {
-      _speechService.speak("You are close to your destination.");
-    } else if (_distanceToDestination < 500 && _distanceToDestination >= 200) {
-      _speechService.speak("Continue straight.");
+    if (_distanceToDestination < 5) {
+      _arrivedAtDestination();
+      return;
+    }
+
+    final distance = _formatDistance(_distanceToDestination);
+    final direction = _getDetailedDirection();
+    final speedInfo = _getSpeedInfo();
+
+    String guidance = '$distance to destination. $direction. $speedInfo';
+
+    _speechService.speak(guidance);
+    _provideHapticFeedback();
+  }
+
+  String _getDetailedDirection() {
+    double relativeBearing = _bearingToDestination - _currentHeading;
+    if (relativeBearing > 180) relativeBearing -= 360;
+    if (relativeBearing < -180) relativeBearing += 360;
+
+    if (relativeBearing.abs() < 15) {
+      return 'Continue straight ahead';
+    } else if (relativeBearing > 0) {
+      if (relativeBearing < 45) {
+        return 'Turn slightly right';
+      } else if (relativeBearing < 135) {
+        return 'Turn right';
+      } else {
+        return 'Turn sharp right';
+      }
+    } else {
+      if (relativeBearing > -45) {
+        return 'Turn slightly left';
+      } else if (relativeBearing > -135) {
+        return 'Turn left';
+      } else {
+        return 'Turn sharp left';
+      }
     }
   }
 
-  void _stopNavigation() {
-    _positionStreamSubscription?.cancel();
-    _speechService.speak("Navigation ended.");
-    if (mounted) {
-      Navigator.pop(context);
+  String _getCardinalDirection(double bearing) {
+    const directions = [
+      'North',
+      'Northeast',
+      'East',
+      'Southeast',
+      'South',
+      'Southwest',
+      'West',
+      'Northwest',
+    ];
+    int index = ((bearing + 22.5) / 45).floor() % 8;
+    return directions[index];
+  }
+
+  String _formatDistance(double meters) {
+    if (meters < 1000) {
+      return '${meters.round()} meters';
+    } else {
+      double km = meters / 1000;
+      return '${km.toStringAsFixed(1)} kilometers';
     }
+  }
+
+  String _getSpeedInfo() {
+    if (_speed < 0.5) {
+      return 'You are stationary';
+    } else {
+      double kmh = _speed * 3.6;
+      return 'Speed: ${kmh.toStringAsFixed(1)} km/h';
+    }
+  }
+
+  String _getNavigationStatus() {
+    final distance = _formatDistance(_distanceToDestination);
+    final direction = _getCardinalDirection(_bearingToDestination);
+    return '$distance $direction';
+  }
+
+  void _checkProximityAlerts() {
+    if (_proximityTimer?.isActive == true) return;
+
+    if (_distanceToDestination <= _proximityAlertDistance &&
+        _distanceToDestination > 5) {
+      _speechService.speak(
+        'Approaching destination. ${_formatDistance(_distanceToDestination)} remaining.',
+      );
+      _provideHapticFeedback(pattern: [0, 500, 200, 500]);
+
+      _proximityTimer = Timer(const Duration(seconds: 30), () {});
+    }
+  }
+
+  void _arrivedAtDestination() {
+    _isNavigationActive = false;
+    _speechService.speak(
+      'You have arrived at your destination: $_destinationAddress. Navigation complete.',
+    );
+    _provideHapticFeedback(pattern: [0, 200, 100, 200, 100, 200]);
+
+    Timer(const Duration(seconds: 5), () {
+      if (mounted) Navigator.of(context).pop();
+    });
+  }
+
+  void _provideHapticFeedback({List<int>? pattern}) {
+    if (!_isVibrationAvailable) return;
+
+    if (pattern != null) {
+      Vibration.vibrate(pattern: pattern);
+    } else {
+      Vibration.vibrate(duration: 200);
+    }
+  }
+
+  Future<void> _handleScreenTap() async {
+    await _speechService.stopSpeaking(); // Interrupt any ongoing speech
+    final status = _getNavigationStatus();
+    final direction = _getDetailedDirection();
+    _speechService.speak('Current status: $status. $direction.');
+
+    HapticFeedback.lightImpact();
+  }
+
+  Future<void> _handleSwipeUp() async {
+    await _speechService
+        .stopSpeaking(); // Interrupt speech before showing settings
+    _showNavigationSettings();
+  }
+
+  Future<void> _handleSwipeDown() async {
+    await _speechService
+        .stopSpeaking(); // Interrupt speech before asking to confirm end
+    _confirmEndNavigation();
+  }
+
+  void _showNavigationSettings() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => _buildSettingsSheet(),
+    );
+  }
+
+  Widget _buildSettingsSheet() {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            colorScheme.surface.withOpacity(0.98),
+            colorScheme.surface.withOpacity(0.95),
+          ],
+        ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 60,
+              height: 5,
+              margin: const EdgeInsets.only(top: 8, bottom: 16),
+              decoration: BoxDecoration(
+                color: colorScheme.onSurface.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            Text(
+              'Navigation Settings',
+              style: GoogleFonts.poppins(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            ListTile(
+              title: Text('Guidance Frequency', style: GoogleFonts.poppins()),
+              subtitle: Text(
+                'Every ${_guidanceIntervalSeconds.round()} seconds',
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove),
+                    onPressed: () {
+                      if (_guidanceIntervalSeconds > 5) {
+                        setState(() {
+                          _guidanceIntervalSeconds -= 5;
+                        });
+                        _restartGuidanceTimer();
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    onPressed: () {
+                      if (_guidanceIntervalSeconds < 60) {
+                        setState(() {
+                          _guidanceIntervalSeconds += 5;
+                        });
+                        _restartGuidanceTimer();
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+
+            const Divider(height: 20),
+
+            ListTile(
+              leading: Icon(Icons.repeat, color: colorScheme.primary),
+              title: Text(
+                'Repeat Current Guidance',
+                style: GoogleFonts.poppins(),
+              ),
+              onTap: () async {
+                Navigator.pop(context);
+                await _speechService.stopSpeaking(); // Interrupt
+                _provideNavigationGuidance();
+              },
+            ),
+
+            ListTile(
+              leading: Icon(Icons.stop, color: colorScheme.error),
+              title: Text('End Navigation', style: GoogleFonts.poppins()),
+              onTap: () async {
+                Navigator.pop(context);
+                await _speechService.stopSpeaking(); // Interrupt
+                _confirmEndNavigation();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _restartGuidanceTimer() {
+    _guidanceTimer?.cancel();
+    _startGuidanceTimer();
+  }
+
+  void _confirmEndNavigation() {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: Text('End Navigation', style: GoogleFonts.poppins()),
+            content: Text(
+              'Are you sure you want to end navigation?',
+              style: GoogleFonts.poppins(),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text(
+                  'Cancel',
+                  style: GoogleFonts.poppins(color: colorScheme.primary),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _endNavigation();
+                },
+                child: Text(
+                  'End Navigation',
+                  style: GoogleFonts.poppins(color: colorScheme.error),
+                ),
+              ),
+            ],
+          ),
+    );
+  }
+
+  void _endNavigation() {
+    _speechService.speak('Navigation ended. Returning to map.');
+    _isNavigationActive = false;
+    Navigator.of(context).pop();
+  }
+
+  void _speakAndFinish(String message) {
+    _speechService.speak(message);
+    Timer(const Duration(seconds: 2), () {
+      if (mounted) Navigator.of(context).pop();
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _logger.i(
-      "AppLifecycleState changed to: $state for ActiveNavigationScreen.",
-    );
-    if (!mounted) {
-      // Add mounted check at the start
-      _logger.d(
-        "ActiveNavigationScreen: Widget not mounted during lifecycle change. Ignoring.",
-      );
-      return;
-    }
-    if (_cameraController == null ||
-        !_cameraController!.value.isInitialized ||
-        _isDisposed) {
-      _logger.d(
-        "Camera not initialized or already disposed during lifecycle change. Ignoring.",
-      );
-      return;
-    }
-
-    if (state == AppLifecycleState.inactive) {
-      _logger.i("App inactive, disposing camera controller.");
-      _disposeCamera();
+    if (state == AppLifecycleState.paused) {
+      _guidanceIntervalSeconds = math.max(_guidanceIntervalSeconds * 2, 30);
+      _restartGuidanceTimer();
     } else if (state == AppLifecycleState.resumed) {
-      _logger.i("App resumed, re-initializing camera controller.");
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (mounted) {
-          await Future.delayed(const Duration(milliseconds: 500));
-          _initializeCamera();
-        }
-      });
+      _guidanceIntervalSeconds = math.min(_guidanceIntervalSeconds / 2, 10);
+      _restartGuidanceTimer();
     }
   }
 
   @override
   void dispose() {
     _logger.i("ActiveNavigationScreen disposed, releasing resources.");
-    WidgetsBinding.instance.removeObserver(this);
+    WidgetsBinding.instance.removeObserver(this); // Explicitly remove observer
     routeObserver.unsubscribe(this);
-    _positionStreamSubscription?.cancel();
-    _disposeCamera(); // Use robust dispose method
-    _objectDetector?.close();
-    _throttler.dispose();
+    _positionStream?.cancel();
+    _magnetometerStream?.cancel();
+    _guidanceTimer?.cancel();
+    _proximityTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_isCameraInitialized) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('Active Navigation'),
+        backgroundColor: colorScheme.primary.withAlpha(180),
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primary.withAlpha(180),
+                colorScheme.secondary.withAlpha(150),
+                colorScheme.tertiary.withAlpha(120),
+              ],
+            ),
+            borderRadius: const BorderRadius.vertical(
+              bottom: Radius.circular(20),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.shadow.withAlpha((0.2 * 255).round()),
+                blurRadius: 10,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Active Navigation',
+                  style: GoogleFonts.sourceCodePro(
+                    color: colorScheme.onPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        toolbarHeight: 120,
+        leading: IconButton(
+          icon: Icon(
+            Icons.arrow_back_ios_new_rounded,
+            color: colorScheme.onPrimary,
+          ),
+          onPressed: _confirmEndNavigation,
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.stop),
-            onPressed: _stopNavigation,
-            tooltip: 'Stop Navigation',
+            icon: const Icon(Icons.settings),
+            color: colorScheme.onPrimary,
+            onPressed: _showNavigationSettings,
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          Positioned.fill(child: CameraPreview(_cameraController!)),
-          CustomPaint(
-            painter: ObjectPainter(_detectedObjects, _imageSize),
-            child: Container(),
-          ),
-          Positioned(
-            top: 16,
-            left: 16,
-            right: 16,
-            child: Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Current Location:',
-                      style: Theme.of(context).textTheme.titleSmall,
+      body: GestureDetector(
+        key: _screenKey,
+        onTap: _handleScreenTap,
+        onPanUpdate: (details) {
+          if (details.delta.dy < -10) {
+            _handleSwipeUp();
+          } else if (details.delta.dy > 10) {
+            _handleSwipeDown();
+          }
+        },
+        child: Container(
+          width: double.infinity,
+          height: double.infinity,
+          color: Colors.black,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _formatDistance(_distanceToDestination),
+                          style: GoogleFonts.sourceCodePro(
+                            color: Colors.white,
+                            fontSize: 48,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _getDetailedDirection(),
+                          style: GoogleFonts.poppins(
+                            color: Colors.white70,
+                            fontSize: 24,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 32),
+                        Text(
+                          'To: $_destinationAddress',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white60,
+                            fontSize: 18,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
-                    Text(
-                      _currentAddress,
-                      style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white10,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Destination:',
-                      style: Theme.of(context).textTheme.titleSmall,
+                    child: Column(
+                      children: [
+                        Text(
+                          'Tap screen: Current status',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white70,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          'Swipe up: Settings',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white70,
+                            fontSize: 16,
+                          ),
+                        ),
+                        Text(
+                          'Swipe down: End navigation',
+                          style: GoogleFonts.poppins(
+                            color: Colors.white70,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
                     ),
-                    Text(
-                      _destinationAddress,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Distance: ${_distanceToDestination.toStringAsFixed(2)} meters',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
-        ],
+        ),
       ),
     );
-  }
-}
-
-class ObjectPainter extends CustomPainter {
-  final List<DetectedObject> detections;
-  final Size previewSize;
-
-  ObjectPainter(this.detections, this.previewSize);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final scaleX = size.width / previewSize.width;
-    final scaleY = size.height / previewSize.height;
-
-    final Paint paint =
-        Paint()
-          ..color = Colors.blueAccent
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3.0;
-
-    final TextStyle textStyle = TextStyle(
-      color: Colors.white,
-      fontSize: 16.0,
-      fontWeight: FontWeight.bold,
-      shadows: [
-        Shadow(
-          blurRadius: 3.0,
-          color: Colors.black.withOpacity(0.8),
-          offset: const Offset(1.0, 1.0),
-        ),
-      ],
-    );
-
-    for (var object in detections) {
-      final Rect scaledRect = Rect.fromLTRB(
-        object.boundingBox.left * scaleX,
-        object.boundingBox.top * scaleY,
-        object.boundingBox.right * scaleX,
-        object.boundingBox.bottom * scaleY,
-      );
-
-      canvas.drawRect(scaledRect, paint);
-
-      final label =
-          object.labels.isNotEmpty
-              ? "${object.labels.first.text} (${(object.labels.first.confidence * 100).toStringAsFixed(1)}%)"
-              : "Unknown";
-
-      final textPainter = TextPainter(
-        text: TextSpan(text: label, style: textStyle),
-        textDirection: TextDirection.ltr,
-      )..layout();
-
-      final backgroundPaint = Paint()..color = Colors.black54;
-      final textRect = Rect.fromLTWH(
-        scaledRect.left,
-        scaledRect.top - textPainter.height - 5,
-        textPainter.width + 10,
-        textPainter.height + 5,
-      );
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(textRect, const Radius.circular(5)),
-        backgroundPaint,
-      );
-
-      textPainter.paint(
-        canvas,
-        Offset(scaledRect.left + 5, scaledRect.top - textPainter.height - 2),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-class _Throttler {
-  final int milliseconds;
-  DateTime? _lastRun;
-  Timer? _timer;
-
-  _Throttler({required this.milliseconds});
-
-  void run(VoidCallback action) {
-    if (_lastRun == null ||
-        DateTime.now().difference(_lastRun!) >
-            Duration(milliseconds: milliseconds)) {
-      _lastRun = DateTime.now();
-      action();
-    } else {
-      _timer?.cancel();
-      _timer = Timer(Duration(milliseconds: milliseconds), () {
-        _lastRun = DateTime.now();
-        action();
-      });
-    }
-  }
-
-  void dispose() {
-    _timer?.cancel();
   }
 }

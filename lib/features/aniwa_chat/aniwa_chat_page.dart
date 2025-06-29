@@ -1,5 +1,6 @@
 // lib/features/aniwa_chat/aniwa_chat_page.dart
 // Keep if any Timer or StreamController is used directly in this file
+import 'package:assist_lens/core/routing/app_router.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -130,6 +131,8 @@ class _AniwaChatPageState extends State<AniwaChatPage>
   @override
   void didPush() {
     // This page has been pushed onto the stack and is now fully visible.
+    context.read<ChatState>().updateCurrentRoute(AppRouter.aniwaChat); // or the correct route
+
     _logger.i('AniwaChatPage: didPush - Resuming chat state.');
     _chatState.setChatPageActive(true); // Set chat page active
     // Resume chat state, which will enable wake word if in voice mode
@@ -311,7 +314,7 @@ class _AniwaChatPageState extends State<AniwaChatPage>
       statusText = 'Listening';
       statusColor = chatTheme.statusColors.listening;
     } else if (chatState.isWakeWordListening) {
-      statusText = 'Say "Assist Lens"';
+      statusText = 'Say "Assistive Lens"';
       statusColor = chatTheme.statusColors.wakeWord;
     } else {
       statusText = 'Ready';
@@ -770,7 +773,7 @@ class _AniwaChatPageState extends State<AniwaChatPage>
                   ),
                   onSubmitted: (text) {
                     if (text.trim().isNotEmpty && !chatState.isProcessingAI) {
-                      _sendMessage(chatState, text.trim());
+ _sendMessageWithInterruption(chatState, text.trim());
                     }
                   },
                 ),
@@ -787,34 +790,35 @@ class _AniwaChatPageState extends State<AniwaChatPage>
   }
 
   // Override _sendMessage to handle interruption
-  void _sendMessage(ChatState chatState, String message) {
-    if (message.isEmpty) return;
+  // void _sendMessage(ChatState chatState, String message) {
+  //   if (message.isEmpty) return;
 
-    _textInputController.clear();
-    _textFocusNode.unfocus();
+  //   _textInputController.clear();
+  //   _textFocusNode.unfocus();
 
-    // Interrupt any ongoing AI speech and restart listening
-    chatState.handleInterruption();
+  //   // Interrupt any ongoing AI speech and restart listening
+  //   chatState.handleInterruption();
 
-    // The scroll will be triggered by ChatState itself via the callback
-    chatState.addUserMessage(message);
-  }
+  //   // The scroll will be triggered by ChatState itself via the callback
+  //   chatState.addUserMessage(message);
+  // }
 
-  // Override _toggleListening to disable mic button during processing
-  void _toggleListening(ChatState chatState) {
-    if (chatState.isProcessingAI) return;
+  // // Override _toggleListening to disable mic button during processing
+  // void _toggleListening(ChatState chatState) {
+  //   if (chatState.isProcessingAI) return;
 
-    if (chatState.isListening) {
-      chatState.stopVoiceInput();
-    } else {
-      chatState.startVoiceInput();
-    }
-  }
+  //   if (chatState.isListening) {
+  //     chatState.stopVoiceInput();
+  //   } else {
+  //     chatState.startVoiceInput();
+  //   }
+  // }
 
   Widget _buildMicButton(ChatState chatState, ChatThemeExtension chatTheme) {
     return GestureDetector(
-      onTap:
-          chatState.isProcessingAI ? null : () => _toggleListening(chatState),
+      onTap: chatState.isProcessingAI
+          ? null
+          : () => _toggleListeningWithProcessingCheck(chatState),
       child: Container(
         width: 48,
         height: 48,
@@ -863,7 +867,7 @@ class _AniwaChatPageState extends State<AniwaChatPage>
     return GestureDetector(
       onTap:
           (hasText && !chatState.isProcessingAI)
-              ? () => _sendMessage(chatState, _textInputController.text.trim())
+              ? () => _sendMessageWithInterruption(chatState, _textInputController.text.trim())
               : null,
       child: Container(
         width: 48,
@@ -891,15 +895,12 @@ class _AniwaChatPageState extends State<AniwaChatPage>
     );
   }
 
-  // Override _sendMessage to handle interruption
+  // Override _sendMessageWithInterruption to handle interruption
   void _sendMessageWithInterruption(ChatState chatState, String message) {
     if (message.isEmpty) return;
 
     _textInputController.clear();
     _textFocusNode.unfocus();
-
-    // Interrupt any ongoing AI speech and restart listening
-    chatState.handleInterruption();
 
     // The scroll will be triggered by ChatState itself via the callback
     chatState.addUserMessage(message);
@@ -947,7 +948,7 @@ class _AniwaChatPageState extends State<AniwaChatPage>
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 40),
               child: Text(
-                'Your intelligent assistant is ready to help.\nSay "Assist Lens" to start a conversation.',
+                'Your intelligent assistant is ready to help.\nSay "Assistive Lens" to start a conversation.',
                 textAlign: TextAlign.center,
                 style: GoogleFonts.inter(
                   fontSize: 16,

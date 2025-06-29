@@ -12,6 +12,7 @@ import '../../core/services/network_service.dart';
 import '../../core/services/speech_service.dart';
 import '../../core/services/gemini_service.dart';
 import '../../core/services/camera_service.dart'; // Import CameraService
+import '../../core/services/history_services.dart'; // Import HistoryService
 import '../../core/utils/throttler.dart'; // Import Throttler
 
 /// Manages the state and logic for scene description using camera and Gemini.
@@ -20,6 +21,7 @@ class SceneDescriptionState extends ChangeNotifier {
   final SpeechService _speechService;
   final GeminiService _geminiService;
   final CameraService _cameraService; // Injected CameraService
+  final HistoryService _historyService; // Injected HistoryService
   final Logger _logger = logger;
 
   // State variables
@@ -36,11 +38,38 @@ class SceneDescriptionState extends ChangeNotifier {
     milliseconds: 3000,
   ); // 3 seconds throttle
 
+  // New state variables for translation and language
+  String _translatedText = '';
+  String _detectedLanguage = ''; // Language of the original description
+  bool _isTranslating = false;
+
+  // Language mapping for TTS (similar to TextReaderState)
+  final Map<String, String> _languageNameToCode = {
+    'English': 'en-US',
+    'Spanish': 'es-ES',
+    'French': 'fr-FR',
+    'German': 'de-DE',
+    'Chinese': 'zh-CN',
+    'Japanese': 'ja-JP',
+    'Korean': 'ko-KR',
+    'Arabic': 'ar-SA',
+    'Russian': 'ru-RU',
+    'Italian': 'it-IT',
+    'Portuguese': 'pt-PT',
+    'Hindi': 'hi-IN',
+    // Add more as needed
+  };
+
+  // Derived state to simplify UI logic
+  bool get isAnyProcessingActive =>
+      _isProcessing || _isTranslating || _isAutoDescribing;
+
   SceneDescriptionState(
     this._networkService,
     this._speechService,
     this._geminiService,
     this._cameraService,
+    this._historyService, // Add HistoryService to constructor
   ) {
     // Add listener to CameraService to react to its internal state changes
     _cameraService.addListener(_onCameraServiceStatusChanged);
@@ -51,11 +80,16 @@ class SceneDescriptionState extends ChangeNotifier {
   bool get isProcessing => _isProcessing;
   String? get errorMessage => _errorMessage;
   String? get capturedImagePath => _capturedImagePath;
-  CameraController? get cameraController =>
-      _cameraController; // Expose the controller
-  bool get isInitialized =>
-      _cameraService.isCameraInitialized; // Reflect CameraService's init state
+  CameraController? get cameraController => _cameraController;
+  bool get isInitialized => _cameraService.isCameraInitialized;
   bool get isAutoDescribing => _isAutoDescribing;
+
+  // Getters for new translation states
+  String get translatedText => _translatedText;
+  String get detectedLanguage => _detectedLanguage;
+  bool get isTranslating => _isTranslating;
+  bool get hasDescription =>
+      _sceneDescription != null && _sceneDescription!.isNotEmpty;
 
   /// Sets the CameraController received from the CameraService.
   /// This is crucial for the UI to display the preview and for this state
@@ -102,6 +136,8 @@ class SceneDescriptionState extends ChangeNotifier {
     _isProcessing = true;
     _sceneDescription = null;
     _errorMessage = null;
+    _translatedText = ''; // Clear previous translation
+    _detectedLanguage = ''; // Clear previous language
     _capturedImagePath = null;
     _speechService.stopSpeaking(); // Stop any ongoing speech
     notifyListeners();
@@ -125,6 +161,10 @@ class SceneDescriptionState extends ChangeNotifier {
       final description = await _geminiService.describeImage(
         _capturedImagePath!,
       );
+      // Assume description is in English by default from Gemini
+      // Or, if Gemini could return language, use that. For now, default to English.
+      _detectedLanguage = "English";
+
       _sceneDescription = description;
       _logger.i("SceneDescriptionState: Scene described successfully.");
       await _speechService.speak(description); // Speak the description aloud
@@ -163,6 +203,8 @@ class SceneDescriptionState extends ChangeNotifier {
     _isAutoDescribing = true;
     _sceneDescription = null;
     _errorMessage = null;
+    _translatedText = '';
+    _detectedLanguage = '';
     _speechService.stopSpeaking();
     notifyListeners();
 
@@ -196,6 +238,7 @@ class SceneDescriptionState extends ChangeNotifier {
         }
 
         final description = await _geminiService.describeImage(path);
+        _detectedLanguage = "English"; // Assuming English from Gemini
         _sceneDescription = description;
         _logger.i("SceneDescriptionState: Auto-description: $description");
         await _speechService.speak(description);
@@ -289,14 +332,84 @@ class SceneDescriptionState extends ChangeNotifier {
     }
   }
 
-  /// Speaks the current scene description aloud.
-  Future<void> speakDescription() async {
-    if (_sceneDescription != null && _sceneDescription!.isNotEmpty) {
-      _logger.i("SceneDescriptionState: Speaking scene description.");
-      await _speechService.speak(_sceneDescription!);
+  /// Speaks the current text (translated if available, otherwise original description).
+  Future<void> speakCurrentText() async {
+    final textToSpeak =
+        _translatedText.isNotEmpty ? _translatedText : _sceneDescription;
+
+    if (textToSpeak != null && textToSpeak.isNotEmpty) {
+      _logger.i("SceneDescriptionState: Speaking current text.");
+      await _speechService.speak(textToSpeak);
     } else {
-      _logger.w("SceneDescriptionState: No description to speak.");
+      _logger.w("SceneDescriptionState: No text available to speak.");
       await _speechService.speak("No scene description available yet.");
+    }
+  }
+
+  /// Translates the current scene description to the target language.
+  Future<void> translateDescription(String targetLanguage) async {
+    if (_sceneDescription == null || _sceneDescription!.isEmpty) {
+      setErrorMessage("No description to translate.");
+      _speechService.speak("No description to translate.");
+      return;
+    }
+    if (isAnyProcessingActive) {
+      setErrorMessage("Already busy. Please wait.");
+      return;
+    }
+    if (!_networkService.isOnline) {
+      setErrorMessage("Cannot translate while offline.");
+      _speechService.speak("Cannot translate text while offline.");
+      return;
+    }
+
+    _isTranslating = true;
+    _errorMessage = null;
+    _speechService.stopSpeaking();
+    notifyListeners();
+
+    _logger.i(
+      "SceneDescriptionState: Translating description to $targetLanguage.",
+    );
+    _speechService.speak("Translating to $targetLanguage.");
+
+    try {
+      final String translated = await _geminiService.translateText(
+        _sceneDescription!,
+        targetLanguage,
+      );
+      _translatedText = translated;
+
+      final String? targetLanguageCode = _languageNameToCode[targetLanguage];
+      if (targetLanguageCode != null) {
+        _logger.i(
+          "SceneDescriptionState: Attempting to set TTS language to $targetLanguageCode.",
+        );
+        final bool languageSet = await _speechService.setLanguage(
+          targetLanguageCode,
+        );
+        if (!languageSet) {
+          _logger.w(
+            "SceneDescriptionState: Failed to set TTS language to $targetLanguageCode.",
+          );
+          setErrorMessage(
+            "Failed to set speech language for $targetLanguage. Speaking in default.",
+          );
+        }
+      } else {
+        _logger.w(
+          "SceneDescriptionState: Unknown target language '$targetLanguage'. Cannot set TTS language.",
+        );
+        setErrorMessage("Unknown language for speech. Speaking in default.");
+      }
+      await _speechService.speak(_translatedText);
+    } catch (e) {
+      _logger.e("SceneDescriptionState: Error translating description: $e");
+      setErrorMessage("Failed to translate description: ${e.toString()}");
+      _speechService.speak("Failed to translate description.");
+    } finally {
+      _isTranslating = false;
+      notifyListeners();
     }
   }
 
@@ -309,14 +422,16 @@ class SceneDescriptionState extends ChangeNotifier {
     }
 
     _logger.i("SceneDescriptionState: Sending scene description to chat.");
+    final textToSend =
+        _translatedText.isNotEmpty ? _translatedText : _sceneDescription!;
+
     try {
-      // This part depends on how you structure inter-service communication.
-      // Assuming you want to add this to the general chat history,
-      // you'd typically use your HistoryService or a callback from ChatState.
-      // For example, if you inject HistoryService into SceneDescriptionState:
-      // await _historyService.addAssistantMessage("Scene Description: \"$_sceneDescription\"");
-      // Or, if ChatState provides a callback to add messages:
-      // chatService.onAddAssistantMessage("Scene Description: \"$_sceneDescription\"");
+      // Assuming ChatService is accessible or a callback is used.
+      // Add the scene description to the history as an assistant message.
+      // ChatState listens to HistoryService and will update its UI.
+      await _historyService.addAssistantMessage(
+        "Scene Description: \"$textToSend\"",
+      );
       _speechService.speak("Scene description sent to chat successfully.");
     } catch (e, stack) {
       _logger.e(
@@ -334,10 +449,13 @@ class SceneDescriptionState extends ChangeNotifier {
     _logger.i("SceneDescriptionState: Clearing results.");
     _sceneDescription = null;
     _errorMessage = null;
+    _translatedText = '';
+    _detectedLanguage = '';
     _capturedImagePath = null;
     _isProcessing = false;
     _isAutoDescribing = false;
     _speechService.stopSpeaking();
+    _isTranslating = false;
     _liveDescriptionThrottler
         .dispose(); // Ensure throttler is disposed on clear
     notifyListeners();

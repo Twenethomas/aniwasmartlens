@@ -1,0 +1,1566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assistive Lens Control Pro</title>
+    <style>
+        /* General Reset and Base Styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px; /* Add padding to body for small screens */
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1200px;
+            width: 95%;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            animation: slideIn 0.8s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: 300;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Status Bar */
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+            flex-wrap: wrap; /* Allow items to wrap on small screens */
+            gap: 10px; /* Spacing between wrapped items */
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 500;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #fff;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Main Content Grid */
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        /* Video Section */
+        .video-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        .video-container {
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            aspect-ratio: 16/9;
+        }
+
+        #video-feed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 10px;
+        }
+
+        .video-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .video-controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap; /* Allow video controls to wrap */
+        }
+
+        .video-controls button {
+            background: rgba(0,0,0,0.7);
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.3s ease;
+        }
+        .video-controls button:hover {
+            background: rgba(0,0,0,0.9);
+        }
+
+        /* Controls Section */
+        .controls-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
+        }
+
+        .command-button {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 10px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+            text-align: center;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .command-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .command-button:active {
+            transform: translateY(0);
+        }
+
+        .command-button.danger {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+            box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+        }
+
+        .command-button.danger:hover {
+            box-shadow: 0 8px 25px rgba(255, 107, 107, 0.4);
+        }
+
+        .command-button.success {
+            background: linear-gradient(135deg, #51cf66, #40c057);
+            box-shadow: 0 4px 15px rgba(81, 207, 102, 0.3);
+        }
+
+        .command-button.warning {
+            background: linear-gradient(135deg, #ffd43b, #fab005);
+            box-shadow: 0 4px 15px rgba(255, 212, 59, 0.3);
+        }
+
+        /* Navigation Section */
+        .navigation-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px; /* Add margin-bottom */
+        }
+
+        .navigation-controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            flex-wrap: wrap; /* Allow navigation controls to wrap */
+        }
+
+        .navigation-controls input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 1em;
+            min-width: 150px; /* Ensure input is not too small */
+        }
+
+        .navigation-instruction {
+            background: rgba(102, 126, 234, 0.1);
+            color: #667eea;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 500;
+            text-align: center;
+            min-height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-left: 5px solid #667eea;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        .navigation-instruction.alert {
+            background: rgba(255, 107, 107, 0.1);
+            color: #ff6b6b;
+            border-left-color: #ff6b6b;
+            animation: pulseWarning 1s infinite;
+        }
+
+        @keyframes pulseWarning {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        /* Communication Sections */
+        .communication-section {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px; /* Add margin-bottom */
+        }
+        .communication-section h3 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+        .message-input-area {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap; /* Allow input elements to wrap */
+        }
+        .message-input-area input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 1em;
+            min-width: 200px;
+        }
+        .message-input-area .command-button {
+            padding: 10px 15px;
+            font-size: 1em;
+            border-radius: 8px;
+            min-height: auto; /* Override default button min-height */
+            box-shadow: none; /* Reduce shadow for a cleaner look in this section */
+        }
+        .message-input-area .command-button:hover {
+            transform: none; /* Disable transform on hover for these smaller buttons */
+            box-shadow: none;
+        }
+
+        /* User Messages Log specific styling */
+        #user-messages-log {
+            height: 180px; /* Increased height for messages */
+            overflow-y: auto;
+            background: #e9ecef; /* Lighter background for user messages */
+            color: #34495e;
+            border: 1px solid #ced4da;
+            border-left: 5px solid #3498db; /* Distinct left border */
+            padding: 15px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        #user-messages-log p {
+            margin-bottom: 8px;
+            padding: 5px 8px;
+            border-bottom: 1px dashed #ced4da; /* Subtle separator */
+            word-wrap: break-word; /* Ensure long words break */
+        }
+        #user-messages-log p:last-child {
+            border-bottom: none;
+        }
+
+        /* Settings Panel */
+        .settings-panel {
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 20px;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+
+        .setting-group {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            flex-wrap: wrap; /* Allow settings to wrap */
+            gap: 5px; /* Spacing for wrapped settings */
+        }
+
+        .setting-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .setting-label {
+            font-weight: 500;
+            color: #2c3e50;
+        }
+
+        .setting-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 24px;
+            background: #ccc;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+
+        .toggle-switch.active {
+            background: #4CAF50;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .toggle-switch.active .toggle-slider {
+            transform: translateX(26px);
+        }
+
+        .volume-slider {
+            width: 100px;
+            appearance: none;
+            height: 4px;
+            border-radius: 2px;
+            background: #ddd;
+            outline: none;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #3498db;
+            cursor: pointer;
+        }
+
+        /* Log Section */
+        .log-section {
+            background: #2c3e50;
+            color: #ecf0f1;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap; /* Allow log header to wrap */
+            gap: 10px;
+        }
+
+        .log-title {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #3498db;
+        }
+
+        .clear-log {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+            border: 1px solid #e74c3c;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .clear-log:hover {
+            background: #e74c3c;
+            color: white;
+        }
+
+        #status-log {
+            height: 250px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 5px 8px;
+            border-radius: 4px;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .log-info { background: rgba(52, 152, 219, 0.2); color: #3498db; }
+        .log-success { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
+        .log-warning { background: rgba(241, 196, 15, 0.2); color: #f1c40f; }
+        .log-error { background: rgba(231, 76, 60, 0.2); color: #e74c3c; }
+
+        /* Notifications */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            transform: translateX(400px);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+        }
+
+        .notification.show {
+            transform: translateX(0);
+        }
+        .notification.success { background: linear-gradient(45deg, #2ecc71, #27ae60); }
+        .notification.error { background: linear-gradient(45deg, #e74c3c, #c0392b); }
+        .notification.warning { background: linear-gradient(45deg, #f1c40f, #f39c12); }
+
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .control-grid {
+                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .navigation-controls {
+                flex-direction: column;
+            }
+
+            .message-input-area {
+                flex-direction: column;
+            }
+            .message-input-area input[type="text"] {
+                width: 100%; /* Full width on small screens */
+                margin-right: 0;
+                margin-bottom: 10px;
+            }
+            .message-input-area .command-button {
+                width: 100%; /* Full width on small screens */
+            }
+        }
+
+        /* High Contrast Mode */
+        body.high-contrast {
+            background: #000 !important;
+            color: #fff !important;
+        }
+
+        body.high-contrast .container {
+            background: #111 !important;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.5) !important;
+        }
+
+        body.high-contrast h1,
+        body.high-contrast .status-item,
+        body.high-contrast .setting-label,
+        body.high-contrast .log-title,
+        body.high-contrast .communication-section h3 {
+            color: #fff !important;
+        }
+
+        body.high-contrast .status-bar {
+            background: #333 !important;
+            box-shadow: none !important;
+        }
+
+        body.high-contrast .video-section,
+        body.high-contrast .controls-section,
+        body.high-contrast .navigation-section,
+        body.high-contrast .communication-section, /* High contrast for new sections */
+        body.high-contrast .settings-panel,
+        body.high-contrast .log-section {
+            background: #222 !important;
+            box-shadow: none !important;
+            border: 1px solid #555 !important;
+        }
+
+        body.high-contrast .command-button,
+        body.high-contrast .voice-button {
+            background: #555 !important;
+            box-shadow: none !important;
+            border: 1px solid #eee !important;
+            color: #fff !important;
+        }
+        body.high-contrast .command-button.danger { background: #800 !important; }
+        body.high-contrast .command-button.success { background: #080 !important; }
+        body.high-contrast .command-button.warning { background: #880 !important; }
+
+
+        body.high-contrast .voice-button.listening {
+            background: #c0392b !important;
+            border-color: #fff !important;
+        }
+
+        body.high-contrast .toggle-switch {
+            background: #555 !important;
+        }
+        body.high-contrast .toggle-switch.active {
+            background: #080 !important;
+        }
+        body.high-contrast .toggle-slider {
+            background: #eee !important;
+        }
+
+        body.high-contrast .volume-slider::-webkit-slider-thumb {
+            background: #fff !important;
+        }
+
+        body.high-contrast #status-log,
+        body.high-contrast #user-messages-log { /* High contrast for user messages log */
+            background: #333 !important;
+            border-color: #555 !important;
+        }
+        body.high-contrast #user-messages-log p {
+            border-bottom-color: #555 !important; /* Adjust separator color */
+        }
+        body.high-contrast #user-messages-log p[style*="italic"] {
+            color: #aaa !important; /* Placeholder text color */
+        }
+
+        body.high-contrast .log-entry {
+            background: transparent !important;
+            border: none !important;
+        }
+        body.high-contrast .log-info { color: #88f !important; }
+        body.high-contrast .log-success { color: #0f0 !important; }
+        body.high-contrast .log-warning { color: #ff0 !important; }
+        body.high-contrast .log-error { color: #f00 !important; }
+
+        body.high-contrast .clear-log {
+            background: #800 !important;
+            color: #fff !important;
+            border-color: #f00 !important;
+        }
+        body.high-contrast .clear-log:hover {
+            background: #f00 !important;
+        }
+
+        body.high-contrast .navigation-instruction {
+            background: #333 !important;
+            color: #fff !important;
+            border-left-color: #88f !important;
+        }
+        body.high-contrast .navigation-instruction.alert {
+            background: #800 !important;
+            color: #fff !important;
+            border-left-color: #f00 !important;
+        }
+        
+        body.high-contrast #caretaker-message-input { /* High contrast for new input */
+            background: #444 !important;
+            color: #fff !important;
+            border-color: #777 !important;
+        }
+
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Assistive Lens Control Pro</h1>
+        
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-indicator"></div>
+                <span id="connection-status">Connecting...</span>
+            </div>
+            <div class="status-item">
+                <span id="system-status">System Idle</span>
+            </div>
+            <div class="status-item">
+                <span id="battery-status">Battery: 100%</span>
+            </div>
+            <div class="status-item">
+                <span id="location-display">Loc: Unknown</span>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="video-section">
+                <h3 style="margin-bottom: 15px; color: #2c3e50;">📹 Live Camera Feed</h3>
+                <div class="video-container">
+                    <video id="video-feed" autoplay muted playsinline style="width: 100%; height: 100%; object-fit: cover; border-radius: 10px; display: none;"></video>
+                    <img id="video-placeholder" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='100%25' height='100%25' fill='%23333'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='white' font-size='20'%3ECamera Feed Loading...%3C/text%3E%3C/svg%3E" alt="Camera Feed Loading" style="width: 100%; height: 100%; object-fit: cover; border-radius: 10px;" />
+                    <div class="video-overlay" id="video-status">📷 Initializing</div>
+                    <div class="video-controls">
+                        <button onclick="toggleCamera()" aria-label="Toggle Camera On or Off">📷 Toggle Camera</button>
+                        <button onclick="switchCamera()" aria-label="Switch between front and back camera">🔄 Switch</button>
+                        <button onclick="captureFrame()" aria-label="Capture still frame">📸 Capture</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls-section">
+                <h3 style="margin-bottom: 15px; color: #2c3e50;">🎮 Quick Commands (Web Buttons)</h3>
+                <div class="control-grid">
+                    <button class="command-button" onclick="sendCommand('describe_scene')" title="Describe the current scene" aria-label="Describe scene command">
+                        👁️ Describe Scene
+                    </button>
+                    <button class="command-button" onclick="sendCommand('read_text')" title="Read visible text" aria-label="Read text command">
+                        📖 Read Text
+                    </button>
+                    <button class="command-button" onclick="sendCommand('detect_objects')" title="Detect objects in view" aria-label="Detect objects command">
+                        🎯 Detect Objects
+                    </button>
+                    <button class="command-button" onclick="sendCommand('recognize_face')" title="Recognize faces" aria-label="Recognize face command">
+                        👤 Recognize Face
+                    </button>
+                    <button class="command-button warning" onclick="sendCommand('check_obstacle')" title="Check for obstacles" aria-label="Check obstacle command">
+                        ⚠️ Check Obstacle
+                    </button>
+                    <button class="command-button success" onclick="sendCommand('announce_location')" title="Announce current location" aria-label="Announce location command">
+                        📍 Location
+                    </button>
+                    <button class="command-button success" onclick="sendCommand('announce_weather')" title="Get weather update" aria-label="Announce weather command">
+                        🌤️ Weather
+                    </button>
+                    <button class="command-button" onclick="sendCommand('toggle_led')" title="Toggle LED light" aria-label="Toggle LED command">
+                        💡 Toggle LED
+                    </button>
+                    <button class="command-button" onclick="sendCommand('trigger_buzzer')" title="Sound buzzer" aria-label="Trigger buzzer command">
+                        🔊 Buzzer
+                    </button>
+                    <button class="command-button" onclick="sendCommand('toggle_voice_input')" title="Toggle Voice Command Listening" aria-label="Toggle Voice Command">
+                        🎤 Voice Command
+                    </button>
+                    <button class="command-button" onclick="sendCommand('repeat_last')" title="Repeat last announcement" aria-label="Repeat last command">
+                        🔁 Repeat Last
+                    </button>
+                    <button class="command-button" onclick="sendCommand('stop_speaking')" title="Stop current speech output" aria-label="Stop Speaking">
+                        🔇 Stop Speaking
+                    </button>
+                    <button class="command-button danger" onclick="sendCommand('emergency_alert')" title="Send emergency alert" aria-label="Emergency alert command">
+                        🚨 Emergency
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="navigation-section">
+            <h3 style="margin-bottom: 15px; color: #2c3e50;">🗺️ Active Navigation</h3>
+            <div class="navigation-controls">
+                <input type="text" id="destination-input" placeholder="Enter destination (e.g., 'Coffee Shop')" aria-label="Destination input">
+                <button class="command-button success" onclick="startNavigation()" aria-label="Start navigation">
+                    ▶️ Start Navigation
+                </button>
+                <button class="command-button danger" onclick="stopNavigation()" aria-label="Stop navigation">
+                    ⏹️ Stop Navigation
+                </button>
+            </div>
+            <div id="navigation-instruction" class="navigation-instruction">
+                No active navigation.
+            </div>
+        </div>
+
+        <!-- NEW: Caretaker to User Communication Section -->
+        <div class="communication-section">
+            <h3>💬 Message to User (Spoken on Glasses)</h3>
+            <div class="message-input-area">
+                <input type="text" id="caretaker-message-input" placeholder="Type message for user..." aria-label="Type message for user">
+                <button class="command-button success" onclick="sendCaretakerMessage()" aria-label="Send message to user">
+                    ✉️ Send to User
+                </button>
+            </div>
+        </div>
+
+        <!-- NEW: User to Caretaker Messages Section -->
+        <div class="communication-section">
+            <h3>📥 Messages from User</h3>
+            <div id="user-messages-log">
+                <p style="font-style: italic; color: #7f8c8d;">No messages yet.</p>
+            </div>
+        </div>
+
+        <div class="settings-panel">
+            <h3 style="margin-bottom: 15px; color: #2c3e50;">⚙️ Settings</h3>
+            <div class="setting-group">
+                <span class="setting-label">Auto-describe scene</span>
+                <div class="setting-control">
+                    <div class="toggle-switch" onclick="toggleSetting(this, 'auto_describe')" role="switch" aria-checked="false" tabindex="0">
+                        <div class="toggle-slider"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">Voice feedback</span>
+                <div class="setting-control">
+                    <div class="toggle-switch active" onclick="toggleSetting(this, 'voice_feedback')" role="switch" aria-checked="true" tabindex="0">
+                        <div class="toggle-slider"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">Obstacle Buzzer</span>
+                <div class="setting-control">
+                    <div class="toggle-switch active" onclick="toggleSetting(this, 'obstacle_buzzer')" role="switch" aria-checked="true" tabindex="0">
+                        <div class="toggle-slider"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">Volume</span>
+                <div class="setting-control">
+                    <input type="range" class="volume-slider" min="0" max="100" value="80" onchange="updateVolume(this.value)" aria-label="Volume slider">
+                    <span id="volume-display">80%</span>
+                </div>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">High Contrast Mode</span>
+                <div class="setting-control">
+                    <div class="toggle-switch" onclick="toggleHighContrast()" role="switch" aria-checked="false" tabindex="0">
+                        <div class="toggle-slider"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="setting-group">
+                <span class="setting-label">Font Size</span>
+                <div class="setting-control">
+                    <button class="command-button small" onclick="adjustFontSize(-10)" aria-label="Decrease Font Size">-</button>
+                    <span id="font-size-display">100%</span>
+                    <button class="command-button small" onclick="adjustFontSize(10)" aria-label="Increase Font Size">+</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="log-section">
+            <div class="log-header">
+                <span class="log-title">📋 Activity Log</span>
+                <button class="clear-log" onclick="clearLog()" aria-label="Clear activity log">Clear Log</button>
+            </div>
+            <div id="status-log" role="log" aria-live="polite"></div>
+        </div>
+    </div>
+
+    <div id="notification" class="notification" role="alert" aria-live="assertive"></div>
+
+    <audio id="speech-audio" preload="auto"></audio>
+
+    <script>
+        // Initialize variables
+        let socket;
+        let isVoiceListening = false;
+        let recognition; 
+        let cameraStream = null;
+        let currentCamera = 'user'; 
+        let isCameraActive = false;
+        let geolocationWatcherId = null; 
+        let settings = {
+            auto_describe: false,
+            // voice_feedback: true, // This setting will now control only web-based alert sounds, not TTS
+            obstacle_buzzer: true,
+            volume: 80, // This will mainly control web-based alert sounds, not Pi's TTS volume directly
+            high_contrast: false, 
+            font_size: 100 
+        };
+
+        // DOM elements
+        const statusLog = document.getElementById('status-log');
+        const connectionStatus = document.getElementById('connection-status');
+        const systemStatus = document.getElementById('system-status');
+        const batteryStatus = document.getElementById('battery-status');
+        const speechAudio = document.getElementById('speech-audio'); 
+        const notification = document.getElementById('notification');
+        const videoFeed = document.getElementById('video-feed');
+        const videoPlaceholder = document.getElementById('video-placeholder');
+        const videoStatus = document.getElementById('video-status');
+        const destinationInput = document.getElementById('destination-input');
+        const navigationInstructionDisplay = document.getElementById('navigation-instruction');
+        const locationDisplay = document.getElementById('location-display');
+        const fontSizeDisplay = document.getElementById('font-size-display');
+        const caretakerMessageInput = document.getElementById('caretaker-message-input'); // NEW
+        const userMessagesLog = document.getElementById('user-messages-log'); // NEW
+
+
+        // Camera functions (unchanged, as they are independent of TTS location)
+        async function initializeCamera() {
+            try {
+                videoStatus.textContent = '📷 Requesting access...';
+                addLog('Requesting camera access...', 'log-info');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: currentCamera,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+                
+                cameraStream = stream;
+                videoFeed.srcObject = stream;
+                videoFeed.style.display = 'block';
+                videoPlaceholder.style.display = 'none';
+                videoStatus.textContent = '🔴 LIVE';
+                isCameraActive = true;
+                
+                addLog('Camera initialized successfully', 'log-success');
+                showNotification('Camera connected', 'success');
+                
+                // Auto-start if server connection exists
+                if (socket && socket.connected) {
+                    startVideoStreaming();
+                }
+                
+            } catch (error) {
+                console.error('Camera initialization failed:', error);
+                addLog('Camera access denied or failed: ' + error.message, 'log-error');
+                videoStatus.textContent = '❌ Camera Error';
+                showNotification('Camera access failed', 'error');
+                
+                // Try to connect to server video feed as fallback
+                tryServerVideoFeed();
+            }
+        }
+
+        function tryServerVideoFeed() {
+            // Try to connect to server video feed endpoint
+            const serverVideoUrl = '/video_feed';
+            videoPlaceholder.src = serverVideoUrl;
+            videoPlaceholder.onerror = function() {
+                // If server video also fails, show static placeholder
+                videoPlaceholder.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='100%25' height='100%25' fill='%23333'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='white' font-size='16'%3ENo Camera Available%3C/text%3E%3C/svg%3E";
+                addLog('Server video feed also unavailable', 'log-warning');
+            };
+            videoPlaceholder.onload = function() {
+                addLog('Connected to server video feed', 'log-success');
+                videoStatus.textContent = '🔴 Server Feed';
+            };
+        }
+
+        async function toggleCamera() {
+            if (isCameraActive && cameraStream) {
+                stopCamera();
+            } else {
+                await initializeCamera();
+            }
+        }
+
+        function stopCamera() {
+            if (cameraStream) {
+                cameraStream.getTracks().forEach(track => track.stop());
+                cameraStream = null;
+            }
+            videoFeed.style.display = 'none';
+            videoPlaceholder.style.display = 'block';
+            videoStatus.textContent = '📷 Camera Off';
+            isCameraActive = false;
+            addLog('Camera stopped', 'log-info');
+        }
+
+        async function switchCamera() {
+            if (!isCameraActive) {
+                addLog('Camera not active', 'log-warning');
+                return;
+            }
+
+            currentCamera = currentCamera === 'user' ? 'environment' : 'user';
+            addLog(`Switching to ${currentCamera === 'user' ? 'front' : 'back'} camera...`, 'log-info');
+            
+            stopCamera();
+            await initializeCamera();
+        }
+
+        function captureFrame() {
+            if (!isCameraActive || !videoFeed.srcObject) {
+                addLog('No active camera to capture from', 'log-warning');
+                return;
+            }
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            
+            canvas.width = videoFeed.videoWidth;
+            canvas.height = videoFeed.videoHeight;
+            
+            context.drawImage(videoFeed, 0, 0, canvas.width, canvas.height); 
+            
+            canvas.toBlob(function(blob) {
+                if (socket && socket.connected) {
+                    const reader = new FileReader();
+                    reader.onload = function() {
+                        // socket.emit('image_capture', { 
+                        //     image: reader.result,
+                        //     timestamp: new Date().toISOString()
+                        // });
+                        addLog('Frame captured and ready to send if backend supports `image_capture`', 'log-info');
+                    };
+                    reader.readAsDataURL(blob);
+                }
+                
+                addLog('Frame captured', 'log-success');
+                showNotification('Frame captured', 'success');
+            }, 'image/jpeg', 0.8);
+        }
+
+        function startVideoStreaming() {
+            if (!isCameraActive || !cameraStream) return;
+            addLog('Client-side video streaming is conceptual. Backend streams video.', 'log-info');
+        }
+
+        function initializeSocket() {
+            try {
+                socket = io();
+                setupSocketEvents();
+                startGeolocationTracking(); 
+            } catch (error) {
+                console.log('Socket.IO not available, running in demo mode');
+                connectionStatus.textContent = 'Demo Mode - No Server Connection';
+                addLog('Running in demo mode', 'log-warning');
+                let batteryLevel = 100;
+                setInterval(() => {
+                    batteryLevel = Math.max(20, batteryLevel - Math.random() * 2);
+                    batteryStatus.textContent = `Battery: ${Math.floor(batteryLevel)}%`;
+                }, 10000);
+            }
+        }
+
+        function setupSocketEvents() {
+            socket.on('connect', function() {
+                console.log('Connected to server');
+                connectionStatus.textContent = '✅ Connected to Glasses';
+                addLog('Connected to assistive device', 'log-success');
+                showNotification('Connected to device', 'success');
+            });
+
+            socket.on('disconnect', function() {
+                console.log('Disconnected from server');
+                connectionStatus.textContent = '❌ Disconnected';
+                addLog('Disconnected from device', 'log-error');
+                showNotification('Device disconnected', 'error');
+            });
+
+            socket.on('system_status', function(data) {
+                console.log('System Status:', data.message);
+                addLog('System: ' + data.message, 'log-info');
+                systemStatus.textContent = 'Status: ' + data.message;
+            });
+
+            socket.on('battery_status', function(data) {
+                batteryStatus.textContent = `Battery: ${data.level}%`;
+                if (data.level < 20) {
+                    addLog(`Low battery warning: ${data.level}%`, 'log-warning');
+                }
+            });
+
+            socket.on('speech_output', function(data) {
+                console.log('Speech Output (from Pi):', data.message);
+                addLog('🔊 ' + data.message, 'log-info');
+                // No window.speechSynthesis here, Pi is speaking.
+            });
+
+            socket.on('stop_speech', function() { 
+                // No window.speechSynthesis.cancel() here, Pi is stopping its own speech.
+                addLog('Speech stop signal received (Pi handled).', 'log-info');
+            });
+
+            socket.on('obstacle_alert', function(data) {
+                addLog('⚠️ OBSTACLE: ' + data.message, data.level === 'critical' ? 'log-error' : 'log-warning');
+                showNotification('Obstacle detected!', data.level);
+                // Keep playing sound alerts on web for multi-modal feedback
+                if (settings.obstacle_buzzer) {
+                    playAlertSound(); 
+                }
+            });
+
+            socket.on('emergency_alert', function(data) {
+                addLog('🚨 EMERGENCY: ' + data.message, 'log-error');
+                showNotification('Emergency alert sent!', 'error');
+                playEmergencySound(); // Play emergency sound on web
+            });
+
+            socket.on('command_response', function(data) {
+                const status = data.status === 'success' || data.status === 'processing' ? 'log-success' : 'log-error';
+                addLog(`Command "${data.command}": ${data.status}`, status);
+                systemStatus.textContent = `${data.command} - ${data.status}`;
+            });
+
+            socket.on('navigation_status', function(data) {
+                addLog(`Navigation Status: ${data.message}`, 'log-info');
+                navigationInstructionDisplay.textContent = data.message;
+                showNotification(`Navigation ${data.status}`, data.status === 'started' ? 'success' : 'info');
+                systemStatus.textContent = `Navigation: ${data.status}`;
+            });
+
+            socket.on('navigation_instruction', function(data) {
+                const typeClass = data.type === 'alert' ? 'navigation-instruction alert' : 'navigation-instruction';
+                navigationInstructionDisplay.className = typeClass;
+                navigationInstructionDisplay.textContent = `➡️ ${data.instruction}`;
+                addLog(`Nav Instruction: ${data.instruction}`, typeClass.includes('alert') ? 'log-warning' : 'log-info');
+                // No window.speechSynthesis here, Pi is speaking.
+            });
+            
+            socket.on('button_gesture', function(data) { 
+                addLog(`Button ${data.button} - ${data.gesture} detected.`, 'log-info');
+            });
+
+            // NEW: Listener for messages coming from the user (Pi)
+            socket.on('user_message', function(data) {
+                console.log('Message from User:', data.message);
+                addLog('User -> Caretaker: ' + data.message, 'log-success');
+                
+                // Remove "No messages yet." placeholder if it exists
+                const placeholder = userMessagesLog.querySelector('p[style*="italic"]');
+                if (placeholder) {
+                    userMessagesLog.removeChild(placeholder);
+                }
+
+                var p = document.createElement('p');
+                p.textContent = new Date().toLocaleTimeString() + ': ' + data.message;
+                userMessagesLog.prepend(p); // Add to top
+                showNotification('New message from user!', 'info');
+            });
+        }
+
+        function sendCommand(cmd, args = {}) {
+            console.log('Sending command:', cmd, args);
+            
+            if (socket && socket.connected) {
+                socket.emit('command', { command: cmd, ...args });
+                addLog('→ ' + cmd.replace('_', ' '), 'log-info');
+            } else {
+                addLog('→ ' + cmd.replace('_', ' ') + ' (demo)', 'log-info');
+                setTimeout(() => {
+                    simulateResponse(cmd);
+                }, 500);
+            }
+            
+            const button = event.target;
+            if (button && button.classList.contains('command-button')) {
+                button.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    button.style.transform = '';
+                }, 150);
+            }
+        }
+
+        // NEW: Function to send message from caretaker to user (Pi)
+        function sendCaretakerMessage() {
+            const message = caretakerMessageInput.value.trim();
+            if (message) {
+                console.log('Sending caretaker message:', message);
+                if (socket && socket.connected) {
+                    socket.emit('command', { command: 'caretaker_message', message: message });
+                    addLog('Caretaker -> User: ' + message, 'log-info');
+                    caretakerMessageInput.value = ''; // Clear input
+                    showNotification('Message sent to user', 'success');
+                } else {
+                    addLog('Caretaker -> User (Demo): ' + message, 'log-warning');
+                    showNotification('Not connected to device. Message not sent.', 'error');
+                    // In demo mode, simulate the message being spoken on the web for testing
+                    if ('speechSynthesis' in window) {
+                        const utterance = new SpeechSynthesisUtterance("Message from caretaker: " + message);
+                        utterance.volume = settings.volume / 100;
+                        window.speechSynthesis.speak(utterance);
+                    }
+                }
+            } else {
+                showNotification('Message cannot be empty.', 'warning');
+            }
+        }
+
+        function simulateResponse(cmd) {
+            const responses = {
+                'describe_scene': 'I can see a well-lit room with a desk and chair. There appears to be a window on the left side.',
+                'read_text': 'No clear text detected in the current view.',
+                'detect_objects': 'Detected: chair, desk, laptop, coffee mug',
+                'recognize_face': 'No faces detected in current view',
+                'check_obstacle': 'Path appears clear, no obstacles detected',
+                'announce_location': 'You are currently in the living room',
+                'announce_weather': 'Current weather: 22°C, partly cloudy',
+                'emergency_alert': 'Emergency alert has been sent to your contacts',
+                'start_navigation': 'Starting navigation to the specified destination. Please proceed carefully.',
+                'stop_navigation': 'Navigation stopped. You are now responsible for your direction.',
+                'toggle_voice_input': 'Voice input toggled.',
+                'repeat_last': 'Repeating last spoken response.',
+                'stop_speaking': 'Speech stopped.',
+                'send_status_update_to_caretaker': 'Status update sent to caretaker.' // Simulate this
+            };
+            
+            if (responses[cmd]) {
+                addLog('🤖 ' + responses[cmd], 'log-success');
+                // In demo mode, still simulate speech for web browser (for testing if Pi not connected)
+                if ('speechSynthesis' in window) {
+                    const utterance = new SpeechSynthesisUtterance(responses[cmd]);
+                    utterance.volume = settings.volume / 100;
+                    window.speechSynthesis.speak(utterance);
+                }
+            }
+        }
+
+        function startNavigation() {
+            const destination = destinationInput.value.trim();
+            if (destination === "") {
+                showNotification("Please enter a destination.", "warning");
+                return;
+            }
+            sendCommand('start_navigation', { destination: destination });
+        }
+
+        function stopNavigation() {
+            sendCommand('stop_navigation');
+        }
+
+        function toggleVoiceCommand() {
+            sendCommand('toggle_voice_input');
+        }
+
+        function toggleSetting(element, setting) {
+            element.classList.toggle('active');
+            settings[setting] = element.classList.contains('active');
+            element.setAttribute('aria-checked', settings[setting].toString()); 
+            addLog(`Setting ${setting}: ${settings[setting] ? 'enabled' : 'disabled'}`, 'log-info');
+        }
+
+        function updateVolume(value) {
+            settings.volume = parseInt(value);
+            document.getElementById('volume-display').textContent = value + '%';
+            // Note: This volume slider primarily affects web-based alert sounds now.
+            // Pi's TTS volume is controlled by the Pi's system audio settings or pyttsx3 properties.
+        }
+
+        function addLog(message, className = '') {
+            const div = document.createElement('div');
+            div.className = 'log-entry ' + className;
+            div.textContent = new Date().toLocaleTimeString() + ': ' + message;
+            statusLog.insertBefore(div, statusLog.firstChild);
+            
+            while (statusLog.children.length > 100) {
+                statusLog.removeChild(statusLog.lastChild);
+            }
+        }
+
+        function clearLog() {
+            statusLog.innerHTML = '';
+            addLog('Log cleared', 'log-info');
+        }
+
+        function showNotification(message, type = 'info') {
+            notification.textContent = message;
+            notification.className = `notification show ${type}`;
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        function playAlertSound() {
+            // This is for web-side alert sounds, not Pi-side TTS
+            if (settings.obstacle_buzzer) { 
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                gainNode.gain.setValueAtTime(settings.volume / 100 * 0.3, audioContext.currentTime);
+                
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.2);
+            }
+        }
+
+        function playEmergencySound() {
+            // This is for web-side emergency sounds, not Pi-side TTS
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            for (let i = 0; i < 3; i++) {
+                setTimeout(() => {
+                    const oscillator = audioContext.createOscillator();
+                    const gainNode = audioContext.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioContext.destination);
+                    
+                    oscillator.frequency.setValueAtTime(1000, audioContext.currentTime);
+                    gainNode.gain.setValueAtTime(settings.volume / 100 * 0.5, audioContext.currentTime);
+                    
+                    oscillator.start();
+                    oscillator.stop(audioContext.currentTime + 0.15);
+                }, i * 200);
+            }
+        }
+
+        // Geolocation Tracking (unchanged)
+        function startGeolocationTracking() {
+            if ("geolocation" in navigator) {
+                addLog('Starting geolocation tracking...', 'log-info');
+                geolocationWatcherId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        const { latitude, longitude, accuracy } = position.coords;
+                        locationDisplay.textContent = `Lat: ${latitude.toFixed(4)}, Lon: ${longitude.toFixed(4)}`;
+                        
+                        if (socket && socket.connected) {
+                            socket.emit('location_update', { latitude, longitude, accuracy });
+                        }
+                        console.log(`Location: Lat ${latitude}, Lon ${longitude}, Accuracy ${accuracy}m`);
+                    },
+                    (error) => {
+                        let errorMessage = "Geolocation error: ";
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                errorMessage += "User denied the request for Geolocation.";
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                errorMessage += "Location information is unavailable.";
+                                break;
+                            case error.TIMEOUT:
+                                errorMessage += "The request to get user location timed out.";
+                                break;
+                            case error.UNKNOWN_ERROR:
+                                errorMessage += "An unknown error occurred.";
+                                break;
+                        }
+                        addLog(errorMessage, 'log-error');
+                        console.error(errorMessage, error);
+                        locationDisplay.textContent = 'Loc: Error';
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        maximumAge: 10000, 
+                        timeout: 5000 
+                    }
+                );
+            } else {
+                addLog('Geolocation is not supported by this browser.', 'log-error');
+                locationDisplay.textContent = 'Loc: Not Supported';
+            }
+        }
+
+        function stopGeolocationTracking() {
+            if (geolocationWatcherId !== null) {
+                navigator.geolocation.clearWatch(geolocationWatcherId);
+                geolocationWatcherId = null;
+                addLog('Geolocation tracking stopped.', 'log-info');
+                locationDisplay.textContent = 'Loc: Stopped';
+            }
+        }
+
+        setInterval(() => {
+            if (settings.auto_describe && socket && socket.connected) {
+                sendCommand('describe_scene', { prompt_suffix: "Focus on path conditions, potential hazards like curbs or stairs, and upcoming turns." });
+            }
+        }, 30000); 
+
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeSocket();
+            addLog('Assistive Lens Control Pro initialized', 'log-success');
+            
+            setTimeout(() => {
+                initializeCamera();
+            }, 1000);
+            
+            document.querySelectorAll('.toggle-switch').forEach(toggleSwitch => {
+                const settingNameMatch = toggleSwitch.onclick.toString().match(/toggleSetting\(this, '(.*?)'\)/);
+                if (settingNameMatch && settingNameMatch[1]) {
+                    const settingName = settingNameMatch[1];
+                    if (settings.hasOwnProperty(settingName) && typeof settings[settingName] === 'boolean') {
+                        if (settings[settingName]) {
+                            toggleSwitch.classList.add('active');
+                            toggleSwitch.setAttribute('aria-checked', 'true');
+                        } else {
+                            toggleSwitch.classList.remove('active');
+                            toggleSwitch.setAttribute('aria-checked', 'false');
+                        }
+                    }
+                } else if (toggleSwitch.onclick.toString().includes('toggleHighContrast()')) {
+                    if (settings.high_contrast) {
+                        toggleSwitch.classList.add('active');
+                        toggleSwitch.setAttribute('aria-checked', 'true');
+                        document.body.classList.add('high-contrast');
+                    } else {
+                        toggleSwitch.classList.remove('active');
+                        toggleSwitch.setAttribute('aria-checked', 'false');
+                        document.body.classList.remove('high-contrast');
+                    }
+                }
+            });
+
+            const volumeSlider = document.querySelector('.volume-slider');
+            volumeSlider.value = settings.volume;
+            document.getElementById('volume-display').textContent = settings.volume + '%';
+
+            fontSizeDisplay.textContent = `${settings.font_size}%`;
+            document.documentElement.style.fontSize = `${settings.font_size}%`;
+        });
+
+        // Keyboard shortcuts (unchanged logic, still useful for desktop testing)
+        document.addEventListener('keydown', function(event) {
+            if (event.ctrlKey) {
+                switch(event.key) {
+                    case 'd': event.preventDefault(); sendCommand('describe_scene'); break;
+                    case 'r': event.preventDefault(); sendCommand('read_text'); break;
+                    case 'o': event.preventDefault(); sendCommand('detect_objects'); break;
+                    case 'f': event.preventDefault(); sendCommand('recognize_face'); break;
+                    case 'l': event.preventDefault(); sendCommand('announce_location'); break;
+                    case 'w': event.preventDefault(); sendCommand('announce_weather'); break;
+                    case 'e': event.preventDefault(); showConfirmDialog('Send emergency alert?', () => sendCommand('emergency_alert')); break;
+                }
+            } else if (event.altKey) {
+                switch(event.key) {
+                    case 'h': event.preventDefault(); toggleHighContrast(); break;
+                    case '=': case '+': event.preventDefault(); adjustFontSize(10); break;
+                    case '-': event.preventDefault(); adjustFontSize(-10); break;
+                    case 'n': event.preventDefault(); startNavigation(); break;
+                    case 's': event.preventDefault(); stopNavigation(); break;
+                    case 'm': event.preventDefault(); sendCommand('stop_speaking'); break;
+                    case 'u': event.preventDefault(); sendCommand('send_status_update_to_caretaker'); break; // NEW: Alt+U for status update
+                }
+            }
+            
+            if (event.code === 'Space' && !event.target.matches('input, textarea')) {
+                event.preventDefault();
+                toggleVoiceCommand();
+            }
+            
+            if (event.key === 'Escape') {
+                sendCommand('stop_speaking'); 
+            }
+        });
+
+        function showConfirmDialog(message, onConfirm) {
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                background: white; padding: 25px; border-radius: 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+                z-index: 1001; text-align: center; max-width: 300px; font-family: 'Segoe UI', sans-serif;
+            `;
+            dialog.innerHTML = `
+                <p style="margin-bottom: 20px; font-size: 1.1em; color: #333;">${message}</p>
+                <button id="confirm-yes" style="background: #28a745; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; margin-right: 10px;">Yes</button>
+                <button id="confirm-no" style="background: #dc3545; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer;">No</button>
+            `;
+            document.body.appendChild(dialog);
+
+            dialog.querySelector('#confirm-yes').onclick = () => { onConfirm(); document.body.removeChild(dialog); };
+            dialog.querySelector('#confirm-no').onclick = () => { document.body.removeChild(dialog); };
+        }
+
+        // Touch/swipe gestures for mobile (unchanged)
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        document.addEventListener('touchstart', function(event) {
+            touchStartX = event.touches[0].clientX;
+            touchStartY = event.touches[0].clientY;
+        }, { passive: true }); 
+
+        document.addEventListener('touchend', function(event) {
+            if (!touchStartX || !touchStartY) return;
+
+            const touchEndX = event.changedTouches[0].clientX;
+            const touchEndY = event.changedTouches[0].clientY;
+            
+            const deltaX = touchEndX - touchStartX;
+            const deltaY = touchEndY - touchStartY;
+            
+            const minSwipeDistance = 70; 
+            
+            if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > minSwipeDistance) {
+                if (deltaX > 0) {
+                    sendCommand('describe_scene');
+                } else {
+                    sendCommand('read_text');
+                }
+            } else if (Math.abs(deltaY) > minSwipeDistance) {
+                if (deltaY > 0) {
+                    sendCommand('announce_location');
+                } else {
+                    sendCommand('check_obstacle');
+                }
+            }
+            
+            touchStartX = 0;
+            touchStartY = 0;
+        });
+
+        // Device orientation for accessibility (unchanged)
+        if ('DeviceOrientationEvent' in window) {
+            let lastShakeTime = 0;
+            
+            window.addEventListener('devicemotion', function(event) {
+                const acceleration = event.accelerationIncludingGravity;
+                const currentTime = new Date().getTime();
+                
+                if (currentTime - lastShakeTime > 1000) { 
+                    const threshold = 15;
+                    
+                    if (Math.abs(acceleration.x) > threshold || 
+                        Math.abs(acceleration.y) > threshold || 
+                        Math.abs(acceleration.z) > threshold) {
+                        
+                        lastShakeTime = currentTime;
+                        addLog('Shake gesture detected - describing scene', 'log-info');
+                        sendCommand('describe_scene');
+                    }
+                }
+            });
+        }
+
+        // Accessibility improvements (unchanged)
+        function setupAccessibility() {
+            document.querySelectorAll('.command-button').forEach(button => {
+                const title = button.getAttribute('title');
+                if (title) {
+                    button.setAttribute('aria-label', title);
+                }
+                button.setAttribute('role', 'button');
+                button.setAttribute('tabindex', '0'); 
+            });
+
+            document.querySelectorAll('.toggle-switch').forEach(toggle => {
+                toggle.setAttribute('role', 'switch');
+                toggle.setAttribute('tabindex', '0'); 
+                toggle.addEventListener('keydown', function(event) {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        toggle.click(); 
+                    }
+                });
+            });
+
+            const focusableElements = Array.from(document.querySelectorAll('button, input[type="text"], .toggle-switch, [tabindex="0"]'))
+                                            .filter(el => !el.closest('.video-controls') && !el.closest('.voice-controls') && !el.closest('.log-header')); 
+            
+            let focusedIndex = 0;
+
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Tab') {
+                    event.preventDefault();
+                    if (event.shiftKey) {
+                        focusedIndex = (focusedIndex - 1 + focusableElements.length) % focusableElements.length;
+                    } else {
+                        focusedIndex = (focusedIndex + 1) % focusableElements.length;
+                    }
+                    focusableElements[focusedIndex].focus();
+                }
+            });
+        }
+
+        setupAccessibility();
+        
+        const helpText = `
+        Keyboard Shortcuts:
+        Ctrl+D: Describe Scene
+        Ctrl+R: Read Text  
+        Ctrl+O: Detect Objects
+        Ctrl+F: Recognize Face
+        Ctrl+L: Announce Location
+        Ctrl+W: Announce Weather
+        Ctrl+E: Emergency Alert (Requires confirmation dialog)
+        Space: Toggle Voice Command
+        Alt+H: Toggle High Contrast
+        Alt++: Increase Font Size
+        Alt+-: Decrease Font Size
+        Alt+N: Start Navigation
+        Alt+S: Stop Navigation
+        Alt+M: Stop Speaking (M for Mute)
+        Alt+U: Send Status Update to Caretaker (User to Caretaker communication)
+        `;
+        
+        console.log(helpText);
+        addLog('Keyboard shortcuts available - check console (F12) for details', 'log-info');
+    </script>
+</body>
+</html>

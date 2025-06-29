@@ -14,7 +14,7 @@ class GeminiService {
   // IMPORTANT: Specify the Gemini 2.0 Flash model
   static const String _modelId = 'gemini-2.0-flash';
   // Leave API key empty; it will be provided by Canvas runtime if needed.
-  static const String _apiKey = 'AIzaSyB_P6mKKBgw9acwZ2S3hC5HTSQxdNf6JME';
+  static const String _apiKey = 'AIzaSyBGBCH8LciYNjGAh04_8aL-i8a18NCo5CM';
   static const String _baseUrl =
       'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -41,6 +41,7 @@ class GeminiService {
     List<Map<String, dynamic>> chatHistory, {
     Map<String, dynamic>? generationConfig,
     String? modelId, // Allow overriding the model ID
+    String? systemInstruction, // NEW: For system-level instructions
   }) async {
     const int maxRetries = 3;
     int retryCount = 0;
@@ -63,6 +64,12 @@ class GeminiService {
 
     if (generationConfig != null) {
       payload['generationConfig'] = generationConfig;
+    }
+
+    if (systemInstruction != null) {
+      payload['systemInstruction'] = {
+        'parts': [{'text': systemInstruction}]
+      };
     }
 
     while (retryCount < maxRetries) {
@@ -175,20 +182,19 @@ class GeminiService {
   /// Translates the given text to the target language using the GPT model.
   /// (Note: This is now routed through getChatResponse with a specific prompt).
   Future<String> translateText(String text, String targetLanguage) async {
-    _logger.i("Translating text to $targetLanguage: $text");
-    final prompt =
-        "Translate the following text into $targetLanguage:\n\"$text\"";
-    final messages = [
-      {
-        "role": "user",
-        "parts": [
-          {"text": prompt},
-        ],
-      },
-    ];
-    return await getChatResponse(messages);
-  }
-
+  _logger.i("Translating text to $targetLanguage: $text");
+  final prompt =
+      "Translate the following text into $targetLanguage. Reply ONLY with the translation, no extra text, no explanation, no formatting:\n\"$text\"";
+  final messages = [
+    {
+      "role": "user",
+      "parts": [
+        {"text": prompt},
+      ],
+    },
+  ];
+  return await getChatResponse(messages);
+}
   /// Generates an image using the Imagen 3.0 model.
   Future<String> generateImage(String prompt) async {
     if (!_networkService.isOnline) {

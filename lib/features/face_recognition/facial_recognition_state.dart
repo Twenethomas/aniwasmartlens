@@ -40,7 +40,6 @@ class FacialRecognitionState extends ChangeNotifier {
 
   final Throttler _throttler = Throttler(
     milliseconds: 1000,
-    
   ); // Process frames every 500ms
 
   // State variables
@@ -54,6 +53,10 @@ class FacialRecognitionState extends ChangeNotifier {
   bool _isRegistered =
       false; // Indicates if a face has been successfully registered
   bool _registrationInProgress = false; // Flag for registration process
+  String?
+  _lastVisibleRecognizedName; // Track the name of the person last confirmed in view
+  DateTime?
+  _lastUnrecognizedSpeechTime; // Track when "Unrecognized" was last spoken
 
   // Getters for UI
   bool get isCameraReady => _cameraService.isCameraInitialized;
@@ -73,12 +76,13 @@ class FacialRecognitionState extends ChangeNotifier {
     required SpeechService speechService,
     required FaceRecognizerService faceRecognizerService,
     required CameraService cameraService, // NEW: CameraService injected
-    required FaceDatabaseHelper faceDatabaseHelper, // Still required by constructor for main.dart setup
+    required FaceDatabaseHelper
+    faceDatabaseHelper, // Still required by constructor for main.dart setup
   }) : _networkService = networkService,
        _speechService = speechService,
        _faceRecognizerService = faceRecognizerService,
        _cameraService = cameraService {
-       // _faceDatabaseHelper = faceDatabaseHelper; // Not stored locally anymore
+    // _faceDatabaseHelper = faceDatabaseHelper; // Not stored locally anymore
     // Assign injected CameraService
     _cameraService.addListener(
       _onCameraServiceStatusChanged,
@@ -123,9 +127,7 @@ class FacialRecognitionState extends ChangeNotifier {
       );
       // Load faces from DB after camera is ready
       await _faceRecognizerService.loadFacesFromDatabase();
-      _logger.i(
-        "FacialRecognitionState: Known faces loaded from database.",
-      );
+      _logger.i("FacialRecognitionState: Known faces loaded from database.");
     } else {
       _logger.e(
         "FacialRecognitionState: Camera not ready after CameraService initialization.",
@@ -162,11 +164,13 @@ class FacialRecognitionState extends ChangeNotifier {
     _setProcessingMessage(null); // Clear any old messages
     _setFaces([]); // Clear previous faces
     _setDetectedFaceName(null); // Clear previous name
+    _lastVisibleRecognizedName =
+        null; // Clear last visible name when starting feed
     setIsProcessingAI(false); // Reset processing flag
 
     await _cameraService.startImageStream((CameraImage image) {
       // Ensure faces are loaded before processing stream
-      if (_faceRecognizerService.knownFaces.isEmpty) { 
+      if (_faceRecognizerService.knownFaces.isEmpty) {
         _faceRecognizerService.loadFacesFromDatabase();
       }
       _throttler.run(() {
@@ -191,6 +195,7 @@ class FacialRecognitionState extends ChangeNotifier {
     _logger.i("FacialRecognitionState: Stopping live camera feed.");
     _throttler.dispose(); // Ensure pending throttled calls are cancelled
     await _cameraService.stopImageStream(); // Delegate stopping
+    _lastVisibleRecognizedName = null; // Clear when feed stops
     notifyListeners();
   }
 
@@ -262,26 +267,63 @@ class FacialRecognitionState extends ChangeNotifier {
       final List<Face> detectedFaces = await _faceDetector.processImage(
         inputImage,
       );
-      _setFaces(detectedFaces);
+      _setFaces(
+        detectedFaces,
+      ); // Update UI with all detected faces for drawing boxes
+
+      String? currentRecognizedName;
 
       if (detectedFaces.isNotEmpty) {
-        _setProcessingMessage("Analyzing faces...");
-        final recognizedName = await _faceRecognizerService.recognizeFace(
+        // Attempt to recognize the first detected face
+        currentRecognizedName = await _faceRecognizerService.recognizeFace(
           detectedFaces.first,
           inputImage,
         ); // Assuming one face for simplicity
-        _setDetectedFaceName(recognizedName);
+      }
 
-        if (recognizedName != null) {
-          _speechService.speak("Hello, $recognizedName!");
-          _setProcessingMessage("Face recognized: $recognizedName");
+      if (currentRecognizedName != null) {
+        // A known face is recognized
+        _setDetectedFaceName(
+          currentRecognizedName,
+        ); // Update UI with the recognized name
+        if (currentRecognizedName != _lastVisibleRecognizedName) {
+          // This person just came into view or the recognized person changed
+          _speechService.speak("Hello, $currentRecognizedName!");
+          _setProcessingMessage("Face recognized: $currentRecognizedName");
+          _lastVisibleRecognizedName = currentRecognizedName;
+          _lastUnrecognizedSpeechTime =
+              null; // Reset unrecognized timer as a known face is seen
         } else {
-          _speechService.speak("Unrecognized face detected.");
-          _setProcessingMessage("Unrecognized face.");
+          // Same person still in view, no new announcement needed for them, just update UI message
+          _setProcessingMessage("Face recognized: $currentRecognizedName");
         }
       } else {
-        _setProcessingMessage("No face detected.");
-        _setDetectedFaceName(null);
+        // No known face is currently recognized
+        _setDetectedFaceName(null); // Clear recognized name from UI
+        if (_lastVisibleRecognizedName != null) {
+          // A known person was just in view and now is not
+          _speechService.speak(
+            "$_lastVisibleRecognizedName is no longer in view.",
+          );
+          _setProcessingMessage("$_lastVisibleRecognizedName left view.");
+          _lastVisibleRecognizedName = null;
+        }
+        // Now handle if there are any faces at all (they must be unrecognized if currentRecognizedName is null)
+        if (detectedFaces.isNotEmpty) {
+          // An unrecognized face is present
+          final now = DateTime.now();
+          if (_lastUnrecognizedSpeechTime == null ||
+              now.difference(_lastUnrecognizedSpeechTime!) >
+                  const Duration(seconds: 5)) {
+            _speechService.speak("Unrecognized face detected.");
+            _lastUnrecognizedSpeechTime = null; // Reset unrecognized timer
+          }
+          _setProcessingMessage("Unrecognized face.");
+        } else {
+          _setProcessingMessage(
+            "No face detected.",
+          ); // No faces detected at all
+        }
       }
     } catch (e, stackTrace) {
       _logger.e(
@@ -291,6 +333,7 @@ class FacialRecognitionState extends ChangeNotifier {
       );
       _setProcessingMessage("Error processing image: ${e.toString()}");
       _setFaces([]);
+      _lastVisibleRecognizedName = null; // Clear on error too
       _setDetectedFaceName(null);
     } finally {
       setIsProcessingAI(false); // Processing finished
@@ -423,6 +466,8 @@ class FacialRecognitionState extends ChangeNotifier {
           _setProcessingMessage("Face for '$name' registered successfully.");
           _speechService.speak("Face for $name registered successfully.");
           _setDetectedFaceName(name); // Use the private setter
+          _lastVisibleRecognizedName =
+              name; // Newly registered person is now visible
           _isRegistered = true; // Set registration flag
         } catch (e) {
           _logger.e("Error registering face: $e");
@@ -505,6 +550,7 @@ class FacialRecognitionState extends ChangeNotifier {
     // Close the face detector
     _faceDetector
         .close()
+        // ignore: unawaited_futures
         .then((_) {
           // Removed redundant null check
           _logger.i("FacialRecognitionState: FaceDetector closed.");

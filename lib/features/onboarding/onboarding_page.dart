@@ -3,7 +3,9 @@ import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../state/app_state.dart';
+import '../aniwa_chat/state/chat_state.dart';
 import '../../core/routing/app_router.dart';
+import '../../main.dart';
 
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key});
@@ -12,9 +14,49 @@ class OnboardingPage extends StatefulWidget {
   State<OnboardingPage> createState() => _OnboardingPageState();
 }
 
-class _OnboardingPageState extends State<OnboardingPage> {
+class _OnboardingPageState extends State<OnboardingPage> with RouteAware {
   final PageController _controller = PageController();
   int _currentIndex = 0;
+  late ChatState _chatState;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _chatState = Provider.of<ChatState>(context, listen: false);
+    routeObserver.subscribe(this, ModalRoute.of(context)! as PageRoute);
+  }
+
+  @override
+  void dispose() {
+    routeObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPush() {
+    _chatState.updateCurrentRoute(AppRouter.onboarding);
+    _chatState.setChatPageActive(true);
+    _chatState.resume();
+  }
+
+  @override
+  void didPopNext() {
+    _chatState.updateCurrentRoute(AppRouter.onboarding);
+    _chatState.setChatPageActive(true);
+    _chatState.resume();
+  }
+
+  @override
+  void didPushNext() {
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
+  }
+
+  @override
+  void didPop() {
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
+  }
 
   final List<Map<String, String>> slides = [
     {

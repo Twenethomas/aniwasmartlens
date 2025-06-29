@@ -1,15 +1,14 @@
 // lib/features/scene_description/scene_description_page.dart
-// Required for File
+import 'package:assist_lens/core/routing/app_router.dart';
+import 'package:assist_lens/features/aniwa_chat/state/chat_state.dart';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart'; // For CameraPreview
+import 'package:camera/camera.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
 import 'package:provider/provider.dart';
-
-import 'package:assist_lens/features/scene_description/scene_description_state.dart'; // Import SceneDescriptionState
-import 'package:assist_lens/core/services/camera_service.dart'; // NEW: Import CameraService
-import 'package:assist_lens/main.dart'; // For global logger and routeObserver
-// Import AppRouter
+import 'package:assist_lens/features/scene_description/scene_description_state.dart';
+import 'package:assist_lens/core/services/camera_service.dart';
+import 'package:assist_lens/main.dart';
 
 class SceneDescriptionPage extends StatefulWidget {
   final bool autoDescribe;
@@ -21,418 +20,725 @@ class SceneDescriptionPage extends StatefulWidget {
 }
 
 class _SceneDescriptionPageState extends State<SceneDescriptionPage>
-    with WidgetsBindingObserver, RouteAware {
-  final Logger _logger = logger; // Using global logger
-  SceneDescriptionState? _sceneDescriptionState; // Now nullable
-  late CameraService _cameraService; // Reference to CameraService
+    with WidgetsBindingObserver, RouteAware, TickerProviderStateMixin {
+  final Logger _logger = logger;
+  SceneDescriptionState? _sceneDescriptionState;
+  late CameraService _cameraService;
+
+  // Track page visibility and initialization state
+  bool _isPageActive = false;
+  bool _isDisposing = false;
+
+  // Animation controller for the "Text in View" indicator
+  late AnimationController _textInViewPulseController;
+  late Animation<double> _textInViewPulseAnimation;
+
+  // List of common languages for translation dropdown
+  final List<String> _languages = [
+    'English',
+    'Spanish',
+    'French',
+    'German',
+    'Chinese',
+    'Japanese',
+    'Korean',
+    'Arabic',
+    'Russian',
+    'Italian',
+    'Portuguese',
+    'Hindi',
+    'Bengali',
+    'Urdu',
+    'Turkish',
+    'Vietnamese',
+    'Thai',
+  ];
+  String? _selectedTargetLanguage;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); // Observe app lifecycle
+    WidgetsBinding.instance.addObserver(this);
+
+    _textInViewPulseController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    )..repeat(reverse: true);
+
+    _textInViewPulseAnimation = Tween<double>(begin: 0.7, end: 1.0).animate(
+      CurvedAnimation(parent: _textInViewPulseController, curve: Curves.easeIn),
+    );
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Get CameraService instance via Provider
-    _cameraService = Provider.of<CameraService>(context, listen: false);
-    // Add listener to CameraService for status changes
-    _cameraService.addListener(_onCameraServiceStatusChanged);
+    if (_isDisposing) return;
 
-    // Get SceneDescriptionState instance (now initialized here)
+    _cameraService = Provider.of<CameraService>(context, listen: false);
     _sceneDescriptionState = Provider.of<SceneDescriptionState>(context, listen: false);
 
-    // Register this route with RouteObserver
-    routeObserver.subscribe(this, ModalRoute.of(context)! as PageRoute);
+    // Subscribe to RouteObserver
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+    }
 
-    // Initial camera setup when the screen is first becoming active
-    _initializeCameraForScreen();
+    _isPageActive = true;
+    _initializePageResources();
   }
 
-  /// This method is called when the current route is popped off, and the user returns to this route.
-  @override
-  void didPopNext() {
-    _logger.i("SceneDescriptionPage: didPopNext - Resuming from next route.");
-    // Re-initialize camera when returning to this screen
-    _initializeCameraForScreen();
-    super.didPopNext();
+  /// Initialize all page resources
+  void _initializePageResources() {
+    if (_isDisposing || !_isPageActive) return;
+    _cameraService.initializeCamera();
+    if (widget.autoDescribe && _cameraService.isCameraInitialized) {
+      _sceneDescriptionState?.startAutoDescription();
+    }
   }
 
-  /// This method is called when the current route is pushed onto, and is no longer the top-most route.
-  @override
-  void didPushNext() {
-    _logger.i("SceneDescriptionPage: didPushNext - Navigating to next route. Stopping camera.");
-    // Stop camera and stream when navigating away from this screen
-    _stopCameraForScreen();
-    super.didPushNext();
+  /// Clean up all page resources
+  void _cleanupPageResources({bool keepProcessingFlags = false}) {
+    if (_isDisposing) return;
+    _sceneDescriptionState?.stopAutoDescription();
+    _cameraService.disposeCamera();
   }
 
-  /// Handles application lifecycle state changes.
-  /// Stops camera when app goes to background and re-initializes when it resumes.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _logger.i("SceneDescriptionPage: App lifecycle state changed: $state");
-    if (state == AppLifecycleState.inactive) {
-      _stopCameraForScreen(); // Stop camera when app is inactive
-    } else if (state == AppLifecycleState.resumed) {
-      _initializeCameraForScreen(); // Re-initialize camera when app resumes
+    super.didChangeAppLifecycleState(state);
+    if (_isDisposing) return;
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        if (_isPageActive) {
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (!_isDisposing && _isPageActive && mounted) {
+              _initializePageResources();
+            }
+          });
+        }
+        break;
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        _cleanupPageResources(keepProcessingFlags: false);
+        break;
     }
   }
 
-  /// Centralized method to initialize the camera for this screen's use.
-  Future<void> _initializeCameraForScreen() async {
-    _logger.i("SceneDescriptionPage: _initializeCameraForScreen called.");
-    // Only initialize camera if it's not already initialized by the service
-    // for this screen's needs. CameraService is now smart about idempotency.
-    await _cameraService.initializeCamera();
-    // Pass controller to state AFTER CameraService has potentially initialized it
-    _sceneDescriptionState?.setCameraController(_cameraService.cameraController);
-    if (widget.autoDescribe && _cameraService.isCameraInitialized) {
-      _sceneDescriptionState?.startAutoDescription(); // Use null-aware access
-    }
+  @override
+  void didPopNext() {
+    if (_isDisposing) return;
+    _isPageActive = true;
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!_isDisposing && _isPageActive && mounted) {
+        _initializePageResources();
+      }
+    });
   }
 
-  /// Centralized method to stop and dispose the camera for this screen's use.
-  Future<void> _stopCameraForScreen() async {
-    _logger.i("SceneDescriptionPage: _stopCameraForScreen called.");
-    // Stop any live description first
-    _sceneDescriptionState?.stopAutoDescription(); // Use null-aware access
-    // Dispose the camera controller via the service
-    await _cameraService.disposeCamera();
+  @override
+  void didPushNext() {
+    _isPageActive = false;
+    _cleanupPageResources(keepProcessingFlags: false);
   }
 
-  /// Callback for CameraService status changes. Triggers a UI rebuild if mounted.
-  void _onCameraServiceStatusChanged() {
-    _logger.d("SceneDescriptionPage: CameraService status changed. Initialized: ${_cameraService.isCameraInitialized}, Streaming: ${_cameraService.isStreamingImages}, Error: ${_cameraService.cameraErrorMessage}");
-    if (!mounted) return;
-    // Notify the SceneDescriptionState that the camera controller might have changed
-    _sceneDescriptionState?.setCameraController(_cameraService.cameraController); // Use null-aware access
-    setState(() {}); // Rebuild to reflect camera status changes in UI
+  @override
+  void didPush() {
+    _isPageActive = true;
+    context.read<ChatState>().updateCurrentRoute(AppRouter.aniwaChat); // or the correct route
+    super.didPush();
+  }
+
+  @override
+  void didPop() {
+    _isPageActive = false;
+    _cleanupPageResources(keepProcessingFlags: false);
+  }
+
+  @override
+  void deactivate() {
+    _isPageActive = false;
+    super.deactivate();
+  }
+
+  @override
+  void dispose() {
+    _isDisposing = true;
+    _isPageActive = false;
+    _textInViewPulseController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    routeObserver.unsubscribe(this);
+    _cleanupPageResources(keepProcessingFlags: false);
+    super.dispose();
+  }
+
+  // Helper method to build a text display section (Card style)
+  Widget _buildTextCard({
+    required String title,
+    required String content,
+    required TextStyle titleStyle,
+    required TextStyle contentStyle,
+    bool isLoading = false,
+    IconData? icon,
+    required ColorScheme colorScheme,
+  }) {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      color: colorScheme.surfaceContainerHighest,
+      margin: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                if (icon != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: Icon(icon, color: colorScheme.primary, size: 20),
+                  ),
+                Text(title, style: titleStyle),
+                const Spacer(),
+                if (isLoading)
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      color: colorScheme.primary,
+                      strokeWidth: 2,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              content,
+              style: contentStyle,
+              maxLines: isLoading ? 1 : 5,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Build action buttons similar to TextReader
+  Widget _buildActionButtons(SceneDescriptionState state, ColorScheme colorScheme, TextTheme textTheme) {
+    return Column(
+      children: [
+        if (state.hasDescription && !state.isProcessing && !state.isAutoDescribing && _isPageActive)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: state.speakCurrentText,
+                icon: Icon(
+                  Icons.volume_up_rounded,
+                  color: colorScheme.onPrimary,
+                ),
+                label: Text(
+                  'Speak Description',
+                  style: textTheme.labelLarge?.copyWith(
+                    color: colorScheme.onPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 14,
+                  ),
+                  elevation: 5,
+                ),
+              ),
+            ),
+          ),
+        if (state.isAutoDescribing && _isPageActive)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: state.speakCurrentText,
+                icon: Icon(
+                  Icons.volume_off_rounded,
+                  color: colorScheme.onPrimary,
+                ),
+                label: Text(
+                  'Stop Speaking',
+                  style: textTheme.labelLarge?.copyWith(
+                    color: colorScheme.onPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary.withAlpha((0.7 * 255).round()),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 14,
+                  ),
+                  elevation: 5,
+                ),
+              ),
+            ),
+          ),
+        if (state.hasDescription && !state.isProcessing && _isPageActive)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: Wrap(
+              spacing: 12.0,
+              runSpacing: 12.0,
+              alignment: WrapAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: state.sendDescriptionToChat,
+                  icon: Icon(
+                    Icons.send_rounded,
+                    color: colorScheme.onTertiary,
+                  ),
+                  label: Text(
+                    'Send to Chat',
+                    style: textTheme.labelLarge?.copyWith(
+                      color: colorScheme.onTertiary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: colorScheme.tertiary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    elevation: 5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 16),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
-    // Use Consumer to react to SceneDescriptionState changes
-    // The 'state' provided here is guaranteed to be non-nullable if provider is set up correctly.
-    return Consumer<SceneDescriptionState>(
-      builder: (context, state, child) {
-        // Show loading/error state if camera is not initialized by the CameraService
-        // We use _cameraService.isCameraInitialized directly here as it's the source of truth
-        if (!_cameraService.isCameraInitialized) {
-          return Scaffold(
-            appBar: AppBar(
-              title: Text('Scene Description', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-              backgroundColor: colorScheme.primary,
-              foregroundColor: colorScheme.onPrimary,
-            ),
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 20),
-                  Text(
-                    _cameraService.cameraErrorMessage ?? "Initializing camera...",
-                    style: Theme.of(context).textTheme.titleMedium,
-                    textAlign: TextAlign.center,
+    return Consumer2<SceneDescriptionState, CameraService>(
+      builder: (context, state, cameraService, child) {
+        return Scaffold(
+          backgroundColor: colorScheme.surface,
+          appBar: AppBar(
+            backgroundColor: colorScheme.primary.withAlpha(180),
+            elevation: 0,
+            flexibleSpace: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    colorScheme.primary.withAlpha(180),
+                    colorScheme.secondary.withAlpha(150),
+                    colorScheme.tertiary.withAlpha(120),
+                  ],
+                ),
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(20),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: colorScheme.shadow.withAlpha((0.2 * 255).round()),
+                    blurRadius: 10,
+                    offset: const Offset(0, 5),
                   ),
-                  if (_cameraService.cameraErrorMessage != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 20.0),
-                      child: ElevatedButton(
-                        onPressed: _initializeCameraForScreen, // Retry initialization
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: colorScheme.secondary,
-                          foregroundColor: colorScheme.onSecondary,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                        ),
-                        child: Text('Retry Camera', style: GoogleFonts.poppins(fontSize: 16)),
-                      ),
-                    ),
                 ],
               ),
+              child: SafeArea(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Scene Description',
+                      style: GoogleFonts.sourceCodePro(
+                        color: colorScheme.onPrimary,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          );
-        }
-
-        // Main UI when camera is initialized
-        return Scaffold(
-          appBar: AppBar(
-            title: Text('Scene Description', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-            backgroundColor: colorScheme.primary,
-            foregroundColor: colorScheme.onPrimary,
+            toolbarHeight: 120,
+            leading: IconButton(
+              icon: Icon(
+                Icons.arrow_back_ios_new_rounded,
+                color: colorScheme.onPrimary,
+              ),
+              onPressed: () {
+                _isPageActive = false;
+                _cleanupPageResources(keepProcessingFlags: false);
+                Navigator.pop(context);
+              },
+            ),
             actions: [
               IconButton(
-                icon: Icon(_cameraService.isFlashOn ? Icons.flash_on : Icons.flash_off),
-                onPressed: () async {
-                  await _cameraService.toggleFlash();
-                },
+                icon: Icon(
+                  state.isAutoDescribing
+                      ? Icons.auto_mode_rounded
+                      : Icons.auto_mode_outlined,
+                  color: state.isAutoDescribing
+                      ? colorScheme.tertiary
+                      : colorScheme.onPrimary,
+                ),
+                onPressed: _isPageActive && !_isDisposing
+                    ? () => state.startAutoDescription()
+                    : null,
+                tooltip: state.isAutoDescribing
+                    ? 'Auto Describe ON'
+                    : 'Auto Describe OFF',
               ),
               IconButton(
-                icon: Icon(Icons.cameraswitch),
-                onPressed: () async {
-                  await _cameraService.toggleCamera();
-                },
+                icon: Icon(
+                  cameraService.isFlashOn
+                      ? Icons.flash_on_rounded
+                      : Icons.flash_off_rounded,
+                  color: colorScheme.onPrimary,
+                ),
+                onPressed: _isPageActive &&
+                        !_isDisposing &&
+                        cameraService.isCameraInitialized
+                    ? cameraService.toggleFlash
+                    : null,
+                tooltip: 'Toggle Flash',
+              ),
+              IconButton(
+                icon: const Icon(Icons.cameraswitch_rounded, color: Colors.white),
+                onPressed: _isPageActive &&
+                        !_isDisposing &&
+                        cameraService.isCameraInitialized
+                    ? cameraService.toggleCamera
+                    : null,
+                tooltip: 'Switch Camera',
               ),
             ],
           ),
           body: Stack(
             children: [
-              // Camera Preview fills the background
-              Positioned.fill(
-                child: CameraPreview(_cameraService.cameraController!), // ! is safe here due to the _cameraService.isCameraInitialized check above
-              ),
-              // Dim overlay when processing
-              if (state.isProcessing) // Access isProcessing directly from the non-nullable 'state'
+              // Camera Preview
+              if (cameraService.cameraController != null &&
+                  cameraService.cameraController!.value.isInitialized &&
+                  _isPageActive)
                 Positioned.fill(
-                  child: Container(
-                    color: Colors.black.withOpacity(0.5), // Deprecated withOpacity, will fix below
-                    child: Center(
-                      child: CircularProgressIndicator(color: colorScheme.secondary),
-                    ),
-                  ),
+                  child: CameraPreview(cameraService.cameraController!),
+                )
+              else
+                Center(
+                  child: cameraService.cameraErrorMessage != null &&
+                          cameraService.cameraErrorMessage!.isNotEmpty
+                      ? Text(
+                          cameraService.cameraErrorMessage!,
+                          style: textTheme.headlineSmall?.copyWith(
+                            color: colorScheme.error,
+                          ),
+                          textAlign: TextAlign.center,
+                        )
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(
+                              color: colorScheme.primary,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _isPageActive
+                                  ? 'Initializing camera...'
+                                  : 'Camera paused',
+                              style: textTheme.bodyMedium?.copyWith(
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
-              // Draggable scrollable sheet for results and controls
+
+              // DraggableScrollableSheet for Results
               DraggableScrollableSheet(
-                initialChildSize: 0.25,
-                minChildSize: 0.1,
-                maxChildSize: 0.7,
-                expand: false,
-                builder: (BuildContext context, ScrollController scrollController) {
+                initialChildSize: 0.3,
+                minChildSize: 0.15,
+                maxChildSize: 0.9,
+                expand: true,
+                builder: (
+                  BuildContext context,
+                  ScrollController scrollController,
+                ) {
                   return Container(
                     decoration: BoxDecoration(
-                      color: colorScheme.surface.withAlpha((0.95 * 255).round()), // Slight transparency
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                      color: colorScheme.surface.withAlpha((0.98 * 255).round()),
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(28),
+                        topRight: Radius.circular(28),
+                      ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.2), // Deprecated withOpacity
-                          blurRadius: 10,
-                          spreadRadius: 2,
+                          color: Colors.black.withAlpha((0.15 * 255).round()),
+                          blurRadius: 20,
+                          spreadRadius: 8,
                         ),
                       ],
                     ),
                     child: Column(
                       children: [
-                        // Handle for dragging the sheet
-                        Container(
-                          height: 40,
-                          alignment: Alignment.center,
+                        // Drag Handle
+                        Padding(
+                          padding: const EdgeInsets.all(12.0),
                           child: Container(
                             width: 60,
                             height: 5,
                             decoration: BoxDecoration(
-                              color: colorScheme.onSurface.withOpacity(0.3), // Deprecated withOpacity
-                              borderRadius: BorderRadius.circular(2.5),
+                              color: colorScheme.onSurface.withAlpha((0.3 * 255).round()),
+                              borderRadius: BorderRadius.circular(10),
                             ),
                           ),
                         ),
                         Expanded(
                           child: SingleChildScrollView(
                             controller: scrollController,
-                            padding: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(20.0),
                             child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
+                              children: <Widget>[
+                                // Error message display
+                                if (state.errorMessage != null &&
+                                    state.errorMessage!.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                    child: Center(
+                                      child: Text(
+                                        state.errorMessage!,
+                                        style: textTheme.bodyMedium?.copyWith(
+                                          color: colorScheme.error,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  ),
+                                const SizedBox(height: 8),
+
+                                // Section Title: Processing Results
                                 Text(
-                                  'Scene Description',
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 22,
+                                  'Scene Analysis',
+                                  style: textTheme.headlineSmall!.copyWith(
                                     fontWeight: FontWeight.bold,
                                     color: colorScheme.onSurface,
                                   ),
                                 ),
                                 const SizedBox(height: 16),
-                                // Display description
+
+                                // Scene Description Card
                                 if (state.sceneDescription != null)
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.secondaryContainer,
-                                      borderRadius: BorderRadius.circular(10),
+                                  _buildTextCard(
+                                    title: 'Scene Description',
+                                    content: state.sceneDescription!,
+                                    titleStyle: textTheme.titleMedium!.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: colorScheme.onSurface,
                                     ),
-                                    child: Text(
-                                      state.sceneDescription!, // ! is safe due to null check
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 16,
-                                        color: colorScheme.onSecondaryContainer,
-                                      ),
+                                    contentStyle: textTheme.bodyLarge!.copyWith(
+                                      color: colorScheme.onSurface.withAlpha((0.9 * 255).round()),
                                     ),
+                                    icon: Icons.description_rounded,
+                                    colorScheme: colorScheme,
                                   ),
-                                if (state.sceneDescription == null && !state.isProcessing)
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.surfaceContainerHighest, // Use surfaceContainerHighest
-                                      borderRadius: BorderRadius.circular(10),
+
+                                // Translated Text Card
+                                if (state.translatedText.isNotEmpty)
+                                  _buildTextCard(
+                                    title: 'Translated Description',
+                                    content: state.translatedText,
+                                    titleStyle: textTheme.titleMedium!.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: colorScheme.onSurface,
                                     ),
-                                    child: Text(
-                                      'Tap "Describe" to get a description of the scene.',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 16,
-                                        fontStyle: FontStyle.italic,
-                                        color: colorScheme.onSurfaceVariant.withAlpha((0.7 * 255).round()), // Use .withAlpha
-                                      ),
+                                    contentStyle: textTheme.bodyLarge!.copyWith(
+                                      color: colorScheme.onSurface.withAlpha((0.9 * 255).round()),
                                     ),
+                                    icon: Icons.translate_rounded,
+                                    colorScheme: colorScheme,
                                   ),
-                                const SizedBox(height: 20),
-                                // Error message display
-                                if (state.errorMessage != null)
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: colorScheme.errorContainer,
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: Text(
-                                      'Error: ${state.errorMessage!}', // ! is safe due to null check
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 14,
-                                        color: colorScheme.onErrorContainer,
-                                      ),
-                                    ),
-                                  ),
-                                const SizedBox(height: 20),
-                                // Action Buttons
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                                  children: [
-                                    Expanded(
-                                      child: ElevatedButton.icon(
-                                        icon: Icon(Icons.description, color: colorScheme.onSecondary),
-                                        label: Text(
-                                          'Describe',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        onPressed: state.isProcessing || !state.isInitialized // Access directly
-                                            ? null
-                                            : () => state.takePictureAndDescribeScene(), // Access directly
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: colorScheme.secondary,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 14,
-                                          ),
-                                          elevation: 5,
-                                          shadowColor: colorScheme.secondary.withAlpha((0.3 * 255).round()),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: ElevatedButton.icon(
-                                        icon: Icon(Icons.mic, color: colorScheme.onPrimary),
-                                        label: Text(
-                                          'Speak',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        onPressed: state.isProcessing || state.sceneDescription == null // Access directly
-                                            ? null
-                                            : () => state.speakDescription(), // Access directly
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: colorScheme.primary,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 14,
-                                          ),
-                                          elevation: 5,
-                                          shadowColor: colorScheme.primary.withAlpha((0.3 * 255).round()),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                                  children: [
-                                    Expanded(
-                                      child: ElevatedButton.icon(
-                                        icon: Icon(Icons.send, color: colorScheme.onTertiary),
-                                        label: Text(
-                                          'Send to Chat',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        onPressed: state.isProcessing || state.sceneDescription == null // Access directly
-                                            ? null
-                                            : () => state.sendDescriptionToChat(), // Access directly
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: colorScheme.tertiary,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 14,
-                                          ),
-                                          elevation: 5,
-                                          shadowColor: colorScheme.tertiary.withAlpha((0.3 * 255).round()),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: ElevatedButton.icon(
-                                        icon: Icon(Icons.clear, color: colorScheme.onError),
-                                        label: Text(
-                                          'Clear',
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        onPressed: state.isProcessing || (state.sceneDescription == null && state.errorMessage == null) // Access directly
-                                            ? null
-                                            : () => state.clearResults(), // Access directly
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: colorScheme.error,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(12),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 14,
-                                          ),
-                                          elevation: 5,
-                                          shadowColor: colorScheme.error.withAlpha((0.3 * 255).round()),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 20),
-                                if (state.isAutoDescribing)
+                                const SizedBox(height: 16),
+
+                                // Detected Language
+                                if (state.detectedLanguage.isNotEmpty)
                                   Padding(
-                                    padding: const EdgeInsets.only(top: 10.0),
-                                    child: Center(
-                                      child: Text(
-                                        "Auto-describing...",
-                                        style: GoogleFonts.poppins(
-                                          fontSize: 16,
-                                          fontStyle: FontStyle.italic,
-                                          color: colorScheme.onSurface.withAlpha((0.8 * 255).round()), // Use .withAlpha
+                                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.language_rounded,
+                                          color: colorScheme.onSurface.withAlpha((0.7 * 255).round()),
+                                          size: 20,
                                         ),
-                                      ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          'Detected Language:',
+                                          style: textTheme.titleSmall!.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                            color: colorScheme.onSurface.withAlpha((0.8 * 255).round()),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          state.detectedLanguage,
+                                          style: textTheme.bodyMedium!.copyWith(
+                                            color: colorScheme.onSurface.withAlpha((0.7 * 255).round()),
+                                            fontStyle: FontStyle.italic,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
+                                const SizedBox(height: 24),
+
+                                // Action Buttons (Speak, Send to Chat)
+                                _buildActionButtons(state, colorScheme, textTheme),
+
+                                // Translate Actions
+                                if (state.sceneDescription != null)
+                                  Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                                        child: Text(
+                                          'Translate to:',
+                                          style: textTheme.titleSmall!.copyWith(
+                                            fontWeight: FontWeight.bold,
+                                            color: colorScheme.onSurface.withAlpha((0.8 * 255).round()),
+                                          ),
+                                        ),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: DropdownButtonFormField<String>(
+                                                value: _selectedTargetLanguage,
+                                                decoration: InputDecoration(
+                                                  labelText: 'Select Language',
+                                                  labelStyle: textTheme.bodyMedium?.copyWith(
+                                                    color: colorScheme.onSurface.withAlpha((0.7 * 255).round()),
+                                                  ),
+                                                  border: OutlineInputBorder(
+                                                    borderRadius: BorderRadius.circular(12),
+                                                    borderSide: BorderSide(
+                                                      color: colorScheme.outline.withAlpha((0.5 * 255).round()),
+                                                    ),
+                                                  ),
+                                                  focusedBorder: OutlineInputBorder(
+                                                    borderRadius: BorderRadius.circular(12),
+                                                    borderSide: BorderSide(
+                                                      color: colorScheme.primary,
+                                                      width: 2,
+                                                    ),
+                                                  ),
+                                                  enabledBorder: OutlineInputBorder(
+                                                    borderRadius: BorderRadius.circular(12),
+                                                    borderSide: BorderSide(
+                                                      color: colorScheme.outline.withAlpha((0.3 * 255).round()),
+                                                    ),
+                                                  ),
+                                                  contentPadding: const EdgeInsets.symmetric(
+                                                    horizontal: 16,
+                                                    vertical: 12,
+                                                  ),
+                                                ),
+                                                items: _languages.map((String lang) {
+                                                  return DropdownMenuItem<String>(
+                                                    value: lang,
+                                                    child: Text(
+                                                      lang,
+                                                      style: textTheme.bodyMedium?.copyWith(
+                                                        color: colorScheme.onSurface,
+                                                      ),
+                                                    ),
+                                                  );
+                                                }).toList(),
+                                                onChanged: state.isTranslating
+                                                    ? null
+                                                    : (String? newValue) {
+                                                        setState(() {
+                                                          _selectedTargetLanguage = newValue;
+                                                        });
+                                                      },
+                                                dropdownColor: colorScheme.surfaceContainerHigh,
+                                                style: textTheme.bodyMedium?.copyWith(
+                                                  color: colorScheme.onSurface,
+                                                ),
+                                                iconEnabledColor: colorScheme.primary,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 12),
+                                            ElevatedButton(
+                                              onPressed: state.isTranslating ||
+                                                      _selectedTargetLanguage == null ||
+                                                      state.sceneDescription == null ||
+                                                      !_isPageActive
+                                                  ? null
+                                                  : () => state.translateDescription(_selectedTargetLanguage!),
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: colorScheme.primary,
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(12),
+                                                ),
+                                                padding: const EdgeInsets.symmetric(
+                                                  horizontal: 20,
+                                                  vertical: 12,
+                                                ),
+                                                elevation: 3,
+                                              ),
+                                              child: state.isTranslating
+                                                  ? SizedBox(
+                                                      width: 20,
+                                                      height: 20,
+                                                      child: CircularProgressIndicator(
+                                                        color: colorScheme.onPrimary,
+                                                        strokeWidth: 2,
+                                                      ),
+                                                    )
+                                                  : Icon(
+                                                      Icons.translate_rounded,
+                                                      color: colorScheme.onPrimary,
+                                                      size: 20,
+                                                    ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                const SizedBox(height: 40),
                               ],
                             ),
                           ),
@@ -444,19 +750,30 @@ class _SceneDescriptionPageState extends State<SceneDescriptionPage>
               ),
             ],
           ),
+          floatingActionButton: _isPageActive &&
+                  !_isDisposing &&
+                  cameraService.isCameraInitialized &&
+                  !state.isProcessing
+              ? FloatingActionButton.extended(
+                  onPressed: state.takePictureAndDescribeScene,
+                  backgroundColor: colorScheme.primary,
+                  foregroundColor: colorScheme.onPrimary,
+                  elevation: 8,
+                  icon: const Icon(Icons.camera_alt_rounded),
+                  label: Text(
+                    'Describe Scene',
+                    style: textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                )
+              : null,
+          floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
         );
       },
     );
-  }
-
-  @override
-  void dispose() {
-    _logger.i("SceneDescriptionPage: Disposing widget.");
-    WidgetsBinding.instance.removeObserver(this); // Stop observing lifecycle
-    routeObserver.unsubscribe(this); // Unsubscribe from route observer
-    // Remove listener from CameraService to prevent memory leaks
-    _cameraService.removeListener(_onCameraServiceStatusChanged);
-    _stopCameraForScreen(); // Ensure camera resources are properly released
-    super.dispose();
   }
 }

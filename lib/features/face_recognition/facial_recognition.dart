@@ -1,4 +1,5 @@
 // lib/features/face_recognition/facial_recognition.dart
+import 'package:assist_lens/core/routing/app_router.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -9,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:assist_lens/main.dart'; // For routeObserver
 import 'package:assist_lens/features/face_recognition/facial_recognition_state.dart';
 import 'package:assist_lens/core/services/camera_service.dart';
+import 'package:assist_lens/features/aniwa_chat/state/chat_state.dart';
 // Import Database Helper
 
 class FacialRecognition extends StatefulWidget {
@@ -23,6 +25,7 @@ class FacialRecognition extends StatefulWidget {
 class _FacialRecognitionState extends State<FacialRecognition>
     with WidgetsBindingObserver, RouteAware {
   final Logger _logger = logger;
+  late ChatState _chatState;
   late FacialRecognitionState _facialRecognitionState;
   
   // Track page visibility and initialization state
@@ -42,6 +45,7 @@ class _FacialRecognitionState extends State<FacialRecognition>
     if (_isDisposing) return;
     
     _facialRecognitionState = Provider.of<FacialRecognitionState>(context, listen: false);
+    _chatState = Provider.of<ChatState>(context, listen: false);
 
     // Subscribe to RouteObserver
     final route = ModalRoute.of(context);
@@ -154,6 +158,9 @@ class _FacialRecognitionState extends State<FacialRecognition>
   void didPush() {
     // Called when this page is pushed onto the navigation stack
     _logger.d('FacialRecognition: Page pushed (didPush)');
+    _chatState.updateCurrentRoute(AppRouter.facialRecognition);
+    _chatState.setChatPageActive(true);
+    _chatState.resume();
     _isPageActive = true;
   }
 
@@ -161,6 +168,8 @@ class _FacialRecognitionState extends State<FacialRecognition>
   void didPop() {
     // Called when this page is popped from the navigation stack
     _logger.d('FacialRecognition: Page popped (didPop)');
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
     _isPageActive = false;
     _cleanupPageResources(keepProcessingFlags: false);
   }

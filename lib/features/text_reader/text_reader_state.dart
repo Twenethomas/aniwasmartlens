@@ -497,10 +497,10 @@ class TextReaderState extends ChangeNotifier {
       } else {
         logger.i("TextReaderState: AI Processing captured image: ${file.path}");
         // Assuming extractTextFromImage returns String? (null if no text or error, or empty string)
-        final String? recognizedTextAiText = await _geminiService
+        final String recognizedTextAiText = await _geminiService
             .extractTextFromImage(file.path);
 
-        if (recognizedTextAiText != null && recognizedTextAiText.isNotEmpty) {
+        if (recognizedTextAiText.isNotEmpty) {
           _setRecognizedText(recognizedTextAiText);
           final String detectedLanguageByAi = await _geminiService
               .detectLanguage(recognizedTextAiText); // Pass the non-null, non-empty string

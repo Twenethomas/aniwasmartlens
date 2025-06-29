@@ -1,21 +1,13 @@
 // lib/core/mixins/voice_assistant_mixin.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:logger/logger.dart';
 import 'package:vibration/vibration.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:provider/provider.dart'; // Import Provider
 
 import '../services/speech_service.dart';
-
-import '../../features/aniwa_chat/state/chat_state.dart'; // NEW: Import ChatState
 import '../../main.dart'; // For global logger
-
-// Import Provider
-
 import '../services/speech_coordinator.dart';
-// NEW: Import ChatState
-// For global logger
+import 'package:logger/logger.dart';
 
 mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
   final SpeechCoordinator _speechCoordinator = SpeechCoordinator(
@@ -30,15 +22,10 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
   bool _isVoiceAssistantListening = false;
   bool _isVoiceAssistantSpeaking = false;
 
-  // Fields for duplicate command prevention
-  String? _lastProcessedCommand;
-  DateTime? _lastProcessedTime;
-
   // Stream Subscriptions
   StreamSubscription<bool>? _listeningStatusSubscription;
   StreamSubscription<bool>? _speakingStatusSubscription;
   StreamSubscription<String>? _recognizedTextSubscription;
-  StreamSubscription<String>? _finalRecognizedTextSubscription;
   StreamSubscription<String>? _speakingTextSubscription;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
 
@@ -86,14 +73,6 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
         });
       }
     });
-
-    _finalRecognizedTextSubscription = speechService.finalRecognizedTextStream
-        .listen((text) {
-          if (mounted) {
-            _logger.i('Final recognized text from Flutter STT: $text');
-            _onFinalRecognizedText(text);
-          }
-        });
 
     _speakingTextSubscription = speechService.speakingTextStream.listen((text) {
       if (mounted) {
@@ -164,44 +143,11 @@ mixin VoiceAssistantMixin<T extends StatefulWidget> on State<T> {
     _speechCoordinator.stopSpeaking();
   }
 
-  Future<void> _onFinalRecognizedText(String command) async {
-    if (command.isEmpty) {
-      _logger.d('Empty command received, ignoring.');
-      return;
-    }
-
-    // Prevent duplicate processing if the same command is recognized rapidly
-    final now = DateTime.now();
-    if (_lastProcessedCommand == command.toLowerCase().trim() &&
-        _lastProcessedTime != null &&
-        now.difference(_lastProcessedTime!) < const Duration(seconds: 2)) {
-      _logger.w('Duplicate command "$command" ignored within 2 seconds.');
-      return;
-    }
-
-    _lastProcessedCommand = command.toLowerCase().trim();
-    _lastProcessedTime = now;
-
-    _logger.i('Processing final recognized text: "$command"');
-
-    // Delegate command processing to ChatState, which will then call ChatService
-    if (mounted) {
-      final chatState = Provider.of<ChatState>(context, listen: false);
-      // Assuming ChatState has a method to process commands and takes BuildContext
-      await chatState.addUserMessage(command);
-    } else {
-      _logger.e(
-        "VoiceAssistantMixin: Context not mounted, cannot process command via ChatState.",
-      );
-    }
-  }
-
   @override
   void dispose() {
     _listeningStatusSubscription?.cancel();
     _speakingStatusSubscription?.cancel();
     _recognizedTextSubscription?.cancel();
-    _finalRecognizedTextSubscription?.cancel();
     _speakingTextSubscription?.cancel();
     _connectivitySubscription?.cancel();
     super.dispose();

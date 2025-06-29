@@ -28,7 +28,22 @@ class FaceRecognizerService {
   // Threshold for recognizing faces. Lower values mean stricter match.
   // This value often needs empirical tuning for your specific model and dataset.
   // For MobileFaceNet, a distance below 1.0-1.2 is often considered a match.
-  static const double _recognitionThreshold = 1.4;
+  double recognitionThreshold =
+      1.0; // Make this tunable, start with a more permissive value
+
+  // Helper function to rotate img_lib.Image
+  img_lib.Image _rotateImage(img_lib.Image image, InputImageRotation rotation) {
+    switch (rotation) {
+      case InputImageRotation.rotation0deg:
+        return image;
+      case InputImageRotation.rotation90deg:
+        return img_lib.copyRotate(image, angle: 90);
+      case InputImageRotation.rotation180deg:
+        return img_lib.copyRotate(image, angle: 180);
+      case InputImageRotation.rotation270deg:
+        return img_lib.copyRotate(image, angle: 270);
+    }
+  }
 
   // Private constructor for singleton pattern
   FaceRecognizerService._privateConstructor(this._faceDatabaseHelper) {
@@ -42,7 +57,8 @@ class FaceRecognizerService {
   factory FaceRecognizerService({FaceDatabaseHelper? faceDatabaseHelper}) {
     // Ensure _faceDatabaseHelper is initialized if not already
     _instance ??= FaceRecognizerService._privateConstructor(
-        faceDatabaseHelper ?? FaceDatabaseHelper());
+      faceDatabaseHelper ?? FaceDatabaseHelper(),
+    );
     return _instance!;
   }
 
@@ -56,9 +72,13 @@ class FaceRecognizerService {
       _interpreter = await Interpreter.fromAsset(
         'assets/ml/mobile_face_net.tflite', // Ensure this path is correct in your pubspec.yaml
       );
-      _logger.i('FaceRecognizerService: MobileFaceNet model loaded successfully.');
+      _logger.i(
+        'FaceRecognizerService: MobileFaceNet model loaded successfully.',
+      );
     } catch (e) {
-      _logger.e('FaceRecognizerService: Failed to load MobileFaceNet model: $e');
+      _logger.e(
+        'FaceRecognizerService: Failed to load MobileFaceNet model: $e',
+      );
     }
   }
 
@@ -75,71 +95,99 @@ class FaceRecognizerService {
     Face face,
   ) async {
     if (_interpreter == null) {
-      _logger.w('FaceRecognizerService: Model not loaded yet. Cannot get embedding.');
+      _logger.w(
+        'FaceRecognizerService: Model not loaded yet. Cannot get embedding.',
+      );
       return null;
     }
 
-    img_lib.Image? originalImage;
+    img_lib.Image? rawImage; // Image in its original orientation from bytes
 
     // 1. Convert InputImage data to img_lib.Image
     if (inputImage.filePath != null) {
       final fileBytes = await File(inputImage.filePath!).readAsBytes();
-      originalImage = img_lib.decodeImage(fileBytes);
+      rawImage = img_lib.decodeImage(fileBytes);
     } else if (inputImage.bytes != null && inputImage.metadata != null) {
       final metadata = inputImage.metadata!;
       if (metadata.format == InputImageFormat.bgra8888) {
         // iOS BGRA8888 (already in RGB-like format)
-        originalImage = img_lib.Image.fromBytes(
+        rawImage = img_lib.Image.fromBytes(
           width: metadata.size.width.toInt(),
           height: metadata.size.height.toInt(),
-          bytes: inputImage.bytes!.buffer,
+          bytes:
+              inputImage
+                  .bytes!
+                  .buffer, // This was 'originalImage', corrected to rawImage
           order: img_lib.ChannelOrder.bgra,
         );
       } else if (metadata.format == InputImageFormat.nv21) {
-        // Android NV21 (YUV420SP) - requires manual conversion
-        originalImage = _convertNv21ToImage(
+        rawImage = _convertNv21ToImage(
           inputImage.bytes!,
           metadata.size.width.toInt(),
           metadata.size.height.toInt(),
         );
       } else {
-        _logger.w('FaceRecognizerService: Unsupported raw image format ${metadata.format} from InputImage.bytes.');
+        _logger.w(
+          'FaceRecognizerService: Unsupported raw image format ${metadata.format} from InputImage.bytes.',
+        );
         return null;
       }
     }
 
-    if (originalImage == null) {
-      _logger.w('FaceRecognizerService: Failed to convert InputImage to img_lib.Image.');
+    if (rawImage == null) {
+      _logger.w(
+        'FaceRecognizerService: Failed to convert InputImage to img_lib.Image.',
+      );
       return null;
     }
 
-    // Apply rotation if any (ML Kit's InputImage handles it, but img_lib needs manual rotation)
-    // For simplicity, assuming ML Kit already handles image orientation before Face detection.
-    // If not, you might need to manually rotate `originalImage` based on `inputImage.metadata.rotation`.
-    // Example: if (inputImage.metadata?.rotation == InputImageRotation.rotation90deg) originalImage = img_lib.copyRotate(originalImage, angle: 90);
+    // 2. Rotate the rawImage to be upright, matching how ML Kit sees it.
+    // The face.boundingBox is relative to this upright image.
+    img_lib.Image uprightImage = rawImage;
+    if (inputImage.metadata?.rotation != null &&
+        inputImage.metadata!.rotation != InputImageRotation.rotation0deg) {
+      uprightImage = _rotateImage(rawImage, inputImage.metadata!.rotation);
+    }
 
-    // 2. Crop the face from the original image using bounding box
+    // Now, uprightImage is oriented correctly. The boundingBox from ML Kit
+    // should apply to this uprightImage. However, ML Kit's bounding box is
+    // for an image of size inputImage.metadata.size. If rotation involved
+    // swapping width/height (90 or 270 deg), uprightImage.width/height will reflect that.
+
+    // 3. Crop the face from the upright image using bounding box
     final Rect boundingBox = face.boundingBox;
     // Clamp bounding box coordinates to ensure they are within image bounds
-    final int left = boundingBox.left.toInt().clamp(0, originalImage.width);
-    final int top = boundingBox.top.toInt().clamp(0, originalImage.height);
-    final int width = boundingBox.width.toInt().clamp(0, originalImage.width - left);
-    final int height = boundingBox.height.toInt().clamp(0, originalImage.height - top);
+    // Bounding box coordinates are relative to the image dimensions ML Kit used.
+    // If rotation was 90 or 270, ML Kit effectively saw an image with swapped width/height.
+    // `uprightImage` will have these swapped dimensions.
 
-    if (width <= 0 || height <= 0) {
-      _logger.w('FaceRecognizerService: Invalid bounding box dimensions after clamp for cropping: w=$width, h=$height');
+    final int cropX = boundingBox.left.toInt().clamp(0, uprightImage.width);
+    final int cropY = boundingBox.top.toInt().clamp(0, uprightImage.height);
+    final int cropWidth = boundingBox.width.toInt().clamp(
+      0,
+      uprightImage.width - cropX,
+    );
+    final int cropHeight = boundingBox.height.toInt().clamp(
+      0,
+      uprightImage.height - cropY,
+    );
+
+    if (cropWidth <= 0 || cropHeight <= 0) {
+      _logger.w(
+        'FaceRecognizerService: Invalid bounding box dimensions after clamp for cropping: w=$cropWidth, h=$cropHeight on upright image (w=${uprightImage.width}, h=${uprightImage.height})',
+      );
       return null;
     }
 
     final img_lib.Image croppedFace = img_lib.copyCrop(
-      originalImage,
-      x: left,
-      y: top,
-      width: width,
-      height: height,
+      uprightImage,
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight,
     );
 
-    // 3. Resize and preprocess the cropped face for model input (112x112 RGB)
+    // 4. Resize and preprocess the cropped face
     final img_lib.Image resizedFace = img_lib.copyResize(
       croppedFace,
       width: _inputImageSize,
@@ -153,7 +201,9 @@ class FaceRecognizerService {
     );
     final Uint8List bytes = rgbImage.getBytes(order: img_lib.ChannelOrder.rgb);
 
-    final inputBytes = Float32List(_inputImageSize * _inputImageSize * 3); // 3 channels (RGB)
+    final inputBytes = Float32List(
+      _inputImageSize * _inputImageSize * 3,
+    ); // 3 channels (RGB)
     int pixelIndex = 0;
     for (int i = 0; i < bytes.length; i += 3) {
       final int r = bytes[i];
@@ -169,16 +219,18 @@ class FaceRecognizerService {
     // Reshape to the model's expected input shape (e.g., [1, 112, 112, 3])
     final input = inputBytes.reshape([1, _inputImageSize, _inputImageSize, 3]);
 
-    // 4. Prepare output buffer
+    // 5. Prepare output buffer
     // MobileFaceNet outputs a 192-dimensional embedding based on the error log.
     final output = List.filled(1 * 192, 0.0).reshape([1, 192]);
 
-    // 5. Run inference
+    // 6. Run inference
     try {
       _interpreter!.run(input, output);
       // The output is typically a list of lists, so output[0] gives the embedding
       // Fixed: Directly convert List<double> to Float32List
-      final Float32List embedding = Float32List.fromList(output[0].cast<double>());
+      final Float32List embedding = Float32List.fromList(
+        output[0].cast<double>(),
+      );
       _logger.d('FaceRecognizerService: Embedding generated successfully.');
       return embedding;
     } catch (e) {
@@ -189,7 +241,11 @@ class FaceRecognizerService {
 
   /// Converts NV21 (YUV420SP) byte array to an img_lib.Image (RGB).
   /// This is essential for processing Android camera images.
-  img_lib.Image? _convertNv21ToImage(Uint8List nv21Bytes, int width, int height) {
+  img_lib.Image? _convertNv21ToImage(
+    Uint8List nv21Bytes,
+    int width,
+    int height,
+  ) {
     if (nv21Bytes.isEmpty || width <= 0 || height <= 0) {
       _logger.w('FaceRecognizerService: Invalid NV21 data for conversion.');
       return null;
@@ -207,8 +263,11 @@ class FaceRecognizerService {
         // UV values are subsampled (every 2x2 block has one U and V)
         // Ensure to access UV values correctly, considering 2 bytes per UV pair.
         final int uvIndex = ((yIndex ~/ 2) * (width ~/ 2) + (xIndex ~/ 2)) * 2;
-        if (uvIndex + 1 >= uv.length) { // Prevent index out of bounds
-          _logger.w('FaceRecognizerService: NV21 UV index out of bounds. Skipping pixel.');
+        if (uvIndex + 1 >= uv.length) {
+          // Prevent index out of bounds
+          _logger.w(
+            'FaceRecognizerService: NV21 UV index out of bounds. Skipping pixel.',
+          );
           continue;
         }
         final int U = uv[uvIndex] & 0xff;
@@ -233,7 +292,11 @@ class FaceRecognizerService {
 
   /// Registers a new face with a given name and its embedding.
   /// For now, this stores the face in an in-memory map.
-  Future<void> registerFace(String name, Face face, InputImage inputImage) async {
+  Future<void> registerFace(
+    String name,
+    Face face,
+    InputImage inputImage,
+  ) async {
     _logger.i('FaceRecognizerService: Registering face for: $name');
     if (name.trim().isEmpty) {
       _logger.e('FaceRecognizerService: Face name cannot be empty.');
@@ -241,11 +304,15 @@ class FaceRecognizerService {
     }
     final Float32List? embedding = await getFaceEmbedding(inputImage, face);
     if (embedding != null) {
+      await _faceDatabaseHelper.insertFace(name, embedding); // Save to DB first
       _knownFaces[name] = embedding;
-      await _faceDatabaseHelper.insertFace(name, embedding); // Save to DB
-      _logger.i('FaceRecognizerService: Face for "$name" registered successfully.');
+      _logger.i(
+        'FaceRecognizerService: Face for "$name" registered successfully.',
+      );
     } else {
-      _logger.e('FaceRecognizerService: Failed to get embedding for "$name". Face not registered.');
+      _logger.e(
+        'FaceRecognizerService: Failed to get embedding for "$name". Face not registered.',
+      );
       throw Exception('Failed to get face embedding for registration.');
     }
   }
@@ -263,9 +330,14 @@ class FaceRecognizerService {
     }
 
     _logger.i('FaceRecognizerService: Attempting to recognize face.');
-    final Float32List? queryEmbedding = await getFaceEmbedding(inputImage, face);
+    final Float32List? queryEmbedding = await getFaceEmbedding(
+      inputImage,
+      face,
+    );
     if (queryEmbedding == null) {
-      _logger.e('FaceRecognizerService: Failed to get embedding for recognition query.');
+      _logger.e(
+        'FaceRecognizerService: Failed to get embedding for recognition query.',
+      );
       return null;
     }
 
@@ -277,8 +349,13 @@ class FaceRecognizerService {
         _logger.w('Embedding length mismatch for $name. Skipping comparison.');
         return;
       }
-      final double distance = _euclideanDistance(queryEmbedding, knownEmbedding);
-      _logger.d('FaceRecognizerService: Distance between query and $name: $distance');
+      final double distance = _euclideanDistance(
+        queryEmbedding,
+        knownEmbedding,
+      );
+      _logger.d(
+        'FaceRecognizerService: Distance between query and $name: $distance',
+      );
 
       if (distance < minDistance) {
         minDistance = distance;
@@ -286,11 +363,15 @@ class FaceRecognizerService {
       }
     });
 
-    if (minDistance < _recognitionThreshold) {
-      _logger.i('FaceRecognizerService: Recognized "$recognizedName" with distance: $minDistance');
+    if (minDistance < recognitionThreshold) {
+      _logger.i(
+        'FaceRecognizerService: Recognized "$recognizedName" with distance: $minDistance',
+      );
       return recognizedName;
     } else {
-      _logger.i('FaceRecognizerService: No face recognized. Minimum distance: $minDistance (Threshold: $_recognitionThreshold)');
+      _logger.i(
+        'FaceRecognizerService: No face recognized. Minimum distance: $minDistance (Threshold: $recognitionThreshold)',
+      );
       return null;
     }
   }
@@ -313,8 +394,14 @@ class FaceRecognizerService {
     try {
       final facesFromDb = await _faceDatabaseHelper.getKnownFaces();
       _knownFaces.clear(); // Clear existing in-memory faces
+      _logger.d(
+        "FaceRecognizerService: loadFacesFromDatabase: facesFromDb length is: ${facesFromDb.length}.",
+      );
+
       _knownFaces.addAll(facesFromDb);
-      _logger.i('FaceRecognizerService: Loaded ${_knownFaces.length} faces from database.');
+      _logger.i(
+        'FaceRecognizerService: Loaded ${_knownFaces.length} faces from database.',
+      );
     } catch (e) {
       _logger.e('FaceRecognizerService: Error loading faces from database: $e');
     }

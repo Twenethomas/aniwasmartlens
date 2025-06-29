@@ -236,6 +236,17 @@ class ExploreFeaturesPage extends StatelessWidget {
                 Navigator.pushNamed(context, AppRouter.history);
               },
             ),
+            _buildFeatureCard(
+              context: context,
+              title: 'Connect to Glasses',
+              description:
+                  'Connect and interact with your Assistive Lens glasses.',
+              icon: Icons.bluetooth_connected_rounded, // Example icon
+              color: Colors.cyan, // Example color
+              onTap: () {
+                Navigator.pushNamed(context, AppRouter.raspberryPiConnect);
+              },
+            ),
           ],
         ),
       ),

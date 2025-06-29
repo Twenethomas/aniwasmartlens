@@ -109,8 +109,10 @@ class ChatState extends ChangeNotifier {
   bool get isBlindModeEnabled => _isBlindModeEnabled;
 
   // Expose the current streaming response
-  String get currentStreamingAssistantResponse => _currentStreamingAssistantResponse;
-  bool get isStreamingAssistantResponse => _currentStreamingAssistantResponse.isNotEmpty;
+  String get currentStreamingAssistantResponse =>
+      _currentStreamingAssistantResponse;
+  bool get isStreamingAssistantResponse =>
+      _currentStreamingAssistantResponse.isNotEmpty;
 
   // Navigation callback - now explicitly set from main.dart
   Function(String routeName, {Object? arguments})? onNavigateRequested;
@@ -158,9 +160,12 @@ class ChatState extends ChangeNotifier {
 
   // Handle incoming partial assistant message chunks
   Future<void> handlePartialAssistantMessage(String partialMessage) async {
-    _logger.d("ChatState: Received partial assistant message: '$partialMessage'");
+    _logger.d(
+      "ChatState: Received partial assistant message: '$partialMessage'",
+    );
 
-    if (_currentStreamingAssistantResponse.isEmpty && partialMessage.isNotEmpty) {
+    if (_currentStreamingAssistantResponse.isEmpty &&
+        partialMessage.isNotEmpty) {
       // This is the first chunk, so add a new (initially empty) assistant message to history
       _conversationHistory.add({'role': 'assistant', 'content': ''});
       _logger.d("ChatState: Added new empty assistant message for streaming.");
@@ -170,8 +175,10 @@ class ChatState extends ChangeNotifier {
     _currentStreamingAssistantResponse = partialMessage;
 
     // Update the last assistant message content with the current streaming response
-    if (_conversationHistory.isNotEmpty && _conversationHistory.last['role'] == 'assistant') {
-      _conversationHistory[_conversationHistory.length - 1]['content'] = _currentStreamingAssistantResponse;
+    if (_conversationHistory.isNotEmpty &&
+        _conversationHistory.last['role'] == 'assistant') {
+      _conversationHistory[_conversationHistory.length - 1]['content'] =
+          _currentStreamingAssistantResponse;
     }
 
     // Only notify and scroll if the chat page is active
@@ -185,13 +192,17 @@ class ChatState extends ChangeNotifier {
   Future<void> finalizeAssistantMessage(String fullMessage) async {
     _logger.i("ChatState: Finalizing assistant message: '$fullMessage'");
 
-    if (_conversationHistory.isNotEmpty && _conversationHistory.last['role'] == 'assistant') {
-      _conversationHistory[_conversationHistory.length - 1]['content'] = fullMessage;
+    if (_conversationHistory.isNotEmpty &&
+        _conversationHistory.last['role'] == 'assistant') {
+      _conversationHistory[_conversationHistory.length - 1]['content'] =
+          fullMessage;
       _logger.d("ChatState: Updated last assistant message with full content.");
     } else {
       // Fallback in case of unexpected state (e.g., streaming started without initial empty message)
       _conversationHistory.add({'role': 'assistant', 'content': fullMessage});
-      _logger.w("ChatState: Unexpected state: Added full assistant message directly. History may be out of sync.");
+      _logger.w(
+        "ChatState: Unexpected state: Added full assistant message directly. History may be out of sync.",
+      );
     }
 
     await _historyService.addEntry(fullMessage, role: 'assistant');
@@ -347,13 +358,30 @@ class ChatState extends ChangeNotifier {
   }
 
   Future<void> _handleFinalRecognizedText(String finalText) async {
-    _logger.i("ChatState: Final recognized text: \"$finalText\"");
-    _recognizedText = ''; // Clear recognized text immediately
+    _logger.i("ChatState: Raw final recognized text: \"$finalText\"");
+
+    // Always clear recognized text immediately.
+    _recognizedText = '';
+    // Also, make sure the UI recognized text is cleared.
+    if (_isChatPageActive) {
+      notifyListeners();
+    }
+
+    // Only process if the final text is not empty and passes debouncing.
     if (finalText.isNotEmpty && _shouldProcessCommand(finalText)) {
       _updateChatStatus(ChatStatus.processing);
-      // NOTE: User message added here to ChatState
-      await addUserMessage(finalText); // Add user message to UI immediately
 
+      // Update last command only if it will be processed
+      _lastCommand = finalText.toLowerCase().trim();
+      _lastCommandTime = DateTime.now();
+
+      // Add user message to UI immediately
+      await addUserMessage(finalText);
+
+      // Introduce a small microtask delay to allow UI to update and event loop to clear
+      await Future.microtask(() {});
+
+      _logger.i("ChatState: Processing user command: \"$finalText\"");
       // Pass the current context to chatService.processUserCommand
       // This context is necessary for TimeOfDay.now().format in ChatService
       await chatService.processUserCommand(
@@ -362,17 +390,19 @@ class ChatState extends ChangeNotifier {
       );
       _resetErrorCount();
     } else if (finalText.isEmpty && _isListening) {
-      // Added condition for empty final text when still listening
+      // If STT stopped with no recognized text, and we were still listening,
+      // explicitly stop listening and return to wake word if applicable.
       _logger.i(
-        "ChatState: STT stopped with no recognized text. Returning to idle.",
+        "ChatState: STT stopped with no recognized text. Returning to idle/wake word.",
       );
+      await _speechService.stopListening(); // Ensure STT is fully stopped
       _isListening = false; // Update internal state
       _updateChatStatus(ChatStatus.idle); // Set status to idle
       await _ensureWakeWordListening(); // Re-enable wake word
-    }
-    // Only notify if chat page is active
-    if (_isChatPageActive) {
-      notifyListeners();
+    } else if (finalText.isEmpty) {
+      _logger.i(
+        "ChatState: Received empty final text, but not actively listening or already processed.",
+      );
     }
   }
 
@@ -388,7 +418,7 @@ class ChatState extends ChangeNotifier {
     }
   }
 
-  void _handleListeningStatusChanged(bool status) {
+  Future<void> _handleListeningStatusChanged(bool status) async {
     _logger.d("ChatState: Listening status changed: $status");
     _isListening = status;
 
@@ -396,7 +426,7 @@ class ChatState extends ChangeNotifier {
       _updateChatStatus(ChatStatus.listening);
       // Stop AI speech if user starts speaking (interruption)
       if (_isSpeaking) {
-        stopSpeaking();
+        await stopSpeaking(); // Await stopping speech
         _logger.i("ChatState: User interruption detected - stopping AI speech");
       }
       // Only cancel follow-up timer if not in follow-up listening mode
@@ -427,15 +457,18 @@ class ChatState extends ChangeNotifier {
       _aiSpeakingFullText = ''; // Clear previous text when speaking starts
     } else if (_chatStatus == ChatStatus.speaking) {
       _aiSpeakingFullText = ''; // Clear text when speaking finishes
-      // TTS has finished. Start follow-up listening.
-      _logger.i(
-        "ChatState: TTS Finished speaking. Starting follow-up listening.",
-      );
-      _updateChatStatus(ChatStatus.listening); // Set status to listening
-        // Add this line to ensure microphone is preempted from wake word.
-        await _speechService.forcePreemptMicrophoneFromWakeWord();
 
-      _isListening = true;
+      _logger.i(
+        "ChatState: TTS Finished speaking. Initiating follow-up listening process.",
+      );
+
+      // Ensure current listening session (if any from final text processing) is stopped cleanly
+      await _speechService.stopListening();
+      _isListening = false;
+      _recognizedText = ''; // Clear any residual recognized text
+
+      _updateChatStatus(ChatStatus.listening); // Set status to listening
+
       _isWakeWordListening = false; // Ensure wake word is off
 
       // Cancel any existing follow-up timer to avoid premature timeout
@@ -444,8 +477,8 @@ class ChatState extends ChangeNotifier {
       _isInFollowUpListening =
           true; // Set flag to indicate follow-up listening active
 
-      // Force preempt microphone from wake word detection immediately before starting STT
-      await _speechService.forcePreemptMicrophoneFromWakeWord();
+      // Add a short delay before starting STT for follow-up, to allow audio buffer to clear
+      await Future.delayed(const Duration(milliseconds: 300));
 
       // Start STT for follow-up questions for a limited duration
       try {
@@ -535,7 +568,8 @@ class ChatState extends ChangeNotifier {
     setIsProcessingAI(isProcessing);
     if (isProcessing) {
       _updateChatStatus(ChatStatus.processing);
-      _currentStreamingAssistantResponse = ''; // Clear streaming buffer when processing starts
+      _currentStreamingAssistantResponse =
+          ''; // Clear streaming buffer when processing starts
       _logger.d("ChatState: Processing started, streaming buffer cleared.");
     } else if (_chatStatus == ChatStatus.processing) {
       _updateChatStatus(ChatStatus.idle);
@@ -598,15 +632,23 @@ class ChatState extends ChangeNotifier {
 
     String greeting;
     if (_speechService.porcupineInitializationFailed) {
-      greeting =
-          "Hello there! I'm Aniwa, your AI companion. I couldn't enable voice activation at the moment, but you can always type your commands. How can I assist you today?";
+      greeting = """
+      <speak>
+          Hello there!
+          I'm Aniwa, your AI companion. <break time="500ms"/>
+          I couldn't enable voice activation at the moment, but you can always type your commands.
+          How can I assist you today?
+      </speak>
+      """;
+
+      "Hello there! I'm Aniwa, your AI companion. I couldn't enable voice activation at the moment, but you can always type your commands. How can I assist you today?";
       _currentInputMode = InputMode.text; // Explicitly set to text mode
       _logger.i(
         "ChatState: Wake word failed, defaulting to text input for greeting.",
       );
     } else {
       greeting =
-          "Hello there! I'm Aniwa, your AI companion. Say 'Assist Lens' to activate voice commands. How can I assist you today?";
+          "Hello there! I'm Aniwa, your AI companion. Say 'Hey Teddy' to activate voice commands. How can I assist you today?";
       _currentInputMode =
           InputMode.voice; // Default to voice mode if wake word is expected
       _logger.i(
@@ -637,8 +679,7 @@ class ChatState extends ChangeNotifier {
       _logger.w("ChatState: Skipping duplicate command: $trimmedCommand");
       return false;
     }
-    _lastCommand = trimmedCommand;
-    _lastCommandTime = now;
+    // _lastCommand and _lastCommandTime will be updated AFTER this check if it passes.
     return true;
   }
 
@@ -702,12 +743,18 @@ class ChatState extends ChangeNotifier {
 
       // Only trigger scroll to bottom after new message is added and notified if chat page is active
       if (_isChatPageActive && _scrollToBottomCallback != null) {
-        _logger.i("ChatState: addEntry: Triggering scroll to bottom callback (chat page active).");
+        _logger.i(
+          "ChatState: addEntry: Triggering scroll to bottom callback (chat page active).",
+        );
         _scrollToBottomCallback!();
       } else if (!_isChatPageActive) {
-        _logger.i("ChatState: addEntry: Skipping scroll, chat page not active.");
+        _logger.i(
+          "ChatState: addEntry: Skipping scroll, chat page not active.",
+        );
       } else {
-        _logger.w("ChatState: addEntry: _scrollToBottomCallback is null. Cannot scroll.");
+        _logger.w(
+          "ChatState: addEntry: _scrollToBottomCallback is null. Cannot scroll.",
+        );
       }
     } catch (e) {
       _logger.e("ChatState: Failed to add entry: $e");
@@ -720,9 +767,17 @@ class ChatState extends ChangeNotifier {
     await addEntry(content, role: 'user');
   }
 
+  String _extractTextFromSSML(String ssmlText) {
+    return ssmlText
+        .replaceAll(RegExp(r'<[^>]*>'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
   Future<void> addAssistantMessage(String content) async {
     _logger.i("ChatState: Calling addAssistantMessage for: '$content'");
-    await addEntry(content, role: 'assistant');
+    final plainText = _extractTextFromSSML(content);
+    await addEntry(plainText, role: 'assistant');
   }
 
   Future<void> clearChatHistory() async {
@@ -893,12 +948,18 @@ class ChatState extends ChangeNotifier {
 
     _logger.i("ChatState: Ready for voice input after wake word detection");
 
+    // Introduce a short delay before starting STT to allow for clean transition
+    await Future.delayed(const Duration(milliseconds: 300));
+
     // CRITICAL FIX: Explicitly start STT listening here after wake word is detected
     // This will now use the startListening method from SpeechService,
     // which includes the microphone release delay and clean STT restart logic.
-    await _speechService.startListening(
+    // Use startExtendedListening to allow for more natural pauses after wake word.
+    await _speechService.startExtendedListening(
+      maxDuration:
+          _followUpListeningDuration, // Use the existing follow-up duration
       manualStart: false,
-    ); // Start STT for user input
+    );
 
     _isListening = true; // Set listening status
     _updateChatStatus(ChatStatus.listening);
@@ -1007,7 +1068,8 @@ class ChatState extends ChangeNotifier {
     notifyListeners();
     // Only trigger scroll if the chat page is currently active
     if (_isChatPageActive) {
-      _scrollToBottomCallback?.call(); // Ensure scroll to bottom after history update
+      _scrollToBottomCallback
+          ?.call(); // Ensure scroll to bottom after history update
     }
   }
 
