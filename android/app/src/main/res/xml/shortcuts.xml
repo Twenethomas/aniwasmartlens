@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This XML file defines App Actions capabilities and static shortcuts for Assist Lens. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <!-- Define a capability for opening the app directly via Google Assistant -->
+    <capability android:name="actions.intent.OPEN_APP">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example.assist_lens" 
+            android:targetClass="com.example.assist_lens.MainActivity"> <!-- <<< CRITICAL: Ensure this matches your MainActivity class exactly -->
+            <data android:scheme="assistlens" android:host="app" />
+        </intent>
+    </capability>
+
+    <shortcut
+        android:shortcutId="open_app_shortcut"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/open_app_shortcut_short_label"
+        android:shortcutLongLabel="@string/open_app_shortcut_long_label"
+        android:shortcutDisabledMessage="@string/open_app_shortcut_disabled_message">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example.assist_lens"
+            android:targetClass="com.example.assist_lens.MainActivity">
+            <data android:scheme="assistlens" android:host="app" />
+        </intent>
+        <categories android:name="android.shortcut.conversation" />
+        <categories android:name="android.shortcut.share" />
+        <categories android:name="android.shortcut.text_sharing" />
+    </shortcut>
+
+</shortcuts>

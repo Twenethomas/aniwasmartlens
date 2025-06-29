@@ -1,0 +1,10 @@
+<!-- android/app/src/main/res/values/strings.xml -->
+<resources>
+    <!-- App name (optional, usually already present) -->
+    <string name="app_name">Assist Lens</string>
+
+    <!-- Strings for App Actions / Shortcuts -->
+    <string name="open_app_shortcut_short_label">Open App</string>
+    <string name="open_app_shortcut_long_label">Open Assist Lens App</string>
+    <string name="open_app_shortcut_disabled_message">App shortcut is disabled.</string>
+</resources>
