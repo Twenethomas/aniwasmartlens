@@ -11,12 +11,16 @@ import 'package:assist_lens/features/object_detection/object_detection_page.dart
 import 'package:assist_lens/features/onboarding/onboarding_page.dart';
 import 'package:assist_lens/features/scene_description/scene_description_page.dart';
 import 'package:assist_lens/features/text_reader/text_reader_page.dart';
+import 'package:assist_lens/features/settings/settings_page.dart'; // NEW: Import SettingsPage
 // For MainAppWrapper
+import 'package:assist_lens/features/raspberry_pi/raspberry_pi_page.dart';
+import 'package:assist_lens/features/raspberry_pi/raspberry_pi_view_page.dart';
+
 import 'package:assist_lens/features/profile/profile_page.dart';
 
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart' as latlong2;
+// import 'package:geolocator/geolocator.dart';
+// import 'package:latlong2/latlong.dart' as latlong2;
 
 class AppRouter {
   static const String onboarding = '/onboarding';
@@ -33,8 +37,10 @@ class AppRouter {
   static const String aniwaChat = '/aniwaChat';
   static const String activeNavigation = '/activeNavigation';
   static const String exploreFeatures = '/exploreFeatures';
-  static const String profile =
-      '/profile'; // This is the route for opening the app directly to the main app 
+  static const String profile = '/profile';
+  static const String raspberryPiConnect = '/raspberryPiConnect';
+  static const String raspberryPiView = '/raspberryPiView';
+  static const String settings = '/settings'; // NEW: Add settings route
   static const String homeRoute = '/home'; // For profile page
 
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
@@ -83,17 +89,22 @@ class AppRouter {
       case activeNavigation:
         final args = settings.arguments as Map<String, dynamic>;
         return MaterialPageRoute(
-          builder:
-              (_) => ActiveNavigationScreen(
-                initialPosition: args['initialPosition'] as Position,
-                destination: args['destination'] as latlong2.LatLng,
-              ),
+          builder: (_) => ActiveNavigationScreen(),
+          settings: settings,
         );
       case exploreFeatures:
         return MaterialPageRoute(builder: (_) => const ExploreFeaturesPage());
-        
+      case raspberryPiConnect:
+        return MaterialPageRoute(
+          builder: (_) => const RaspberryPiConnectPage(),
+        );
+      case raspberryPiView:
+        return MaterialPageRoute(builder: (_) => const RaspberryPiViewPage());
+
       case profile:
         return MaterialPageRoute(builder: (_) => const ProfilePage());
+      case AppRouter.settings:
+        return MaterialPageRoute(builder: (_) => const SettingsPage());
       default:
         return MaterialPageRoute(
           builder:

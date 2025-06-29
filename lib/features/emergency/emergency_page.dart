@@ -5,7 +5,14 @@ import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:google_fonts/google_fonts.dart'; // Import for consistent fonts
 import 'package:logger/logger.dart';
+// import 'package:flutter_sms/flutter_sms.dart'; // Removed flutter_sms
+import 'dart:io' show Platform; // Added for platform checking
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../../core/routing/app_router.dart';
+import '../aniwa_chat/state/chat_state.dart';
+import '../../main.dart';
 
 class EmergencyPage extends StatefulWidget {
   const EmergencyPage({super.key});
@@ -14,9 +21,49 @@ class EmergencyPage extends StatefulWidget {
   State<EmergencyPage> createState() => _EmergencyPageState();
 }
 
-class _EmergencyPageState extends State<EmergencyPage> {
+class _EmergencyPageState extends State<EmergencyPage> with RouteAware {
   final Logger _logger = Logger();
   bool _isSendingSos = false;
+  late ChatState _chatState;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _chatState = Provider.of<ChatState>(context, listen: false);
+    routeObserver.subscribe(this, ModalRoute.of(context)! as PageRoute);
+  }
+
+  @override
+  void dispose() {
+    routeObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  @override
+  void didPush() {
+    _chatState.updateCurrentRoute(AppRouter.emergency);
+    _chatState.setChatPageActive(true);
+    _chatState.resume();
+  }
+
+  @override
+  void didPopNext() {
+    _chatState.updateCurrentRoute(AppRouter.emergency);
+    _chatState.setChatPageActive(true);
+    _chatState.resume();
+  }
+
+  @override
+  void didPushNext() {
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
+  }
+
+  @override
+  void didPop() {
+    _chatState.setChatPageActive(false);
+    _chatState.pause();
+  }
 
   Future<bool> _requestPermissions() async {
     // Request Location Permission
@@ -31,8 +78,20 @@ class _EmergencyPageState extends State<EmergencyPage> {
       return false;
     }
 
-    // SMS permission is not strictly needed for url_launcher with 'sms:' scheme,
-    // as it delegates to the default SMS app, which handles its own permissions.
+    // SMS permission is implicitly handled by url_launcher opening the default SMS app.
+    // No need to explicitly request Permission.sms if not using direct send.
+    // if (Platform.isAndroid) {
+    //   var smsStatus = await Permission.sms.status;
+    //   if (!smsStatus.isGranted) {
+    //     _logger.i("Requesting SMS permission for direct send.");
+    //     smsStatus = await Permission.sms.request();
+    //   }
+    //   if (!smsStatus.isGranted) {
+    //     _logger.w(
+    //       "SMS permission denied for direct send. Will fallback to opening SMS app.",
+    //     );
+    //   }
+    // }
     return true;
   }
 
@@ -51,11 +110,34 @@ class _EmergencyPageState extends State<EmergencyPage> {
     }
 
     try {
-      _logger.i("Fetching current location...");
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 20),
-      );
+      _logger.i("Fetching current location using getPositionStream().first...");
+      LocationSettings locationSettings;
+      if (Platform.isAndroid) {
+        locationSettings = AndroidSettings(
+          accuracy: LocationAccuracy.high,
+          // distanceFilter: 100, // Optional: Define a distance filter
+          // forceLocationManager: false, // Optional
+        );
+      } else if (Platform.isIOS || Platform.isMacOS) {
+        locationSettings = AppleSettings(
+          accuracy: LocationAccuracy.high,
+          activityType: ActivityType.other, // General activity type
+          // distanceFilter: 100, // Optional
+          // pauseAutomatically: true, // Optional
+        );
+      } else {
+        locationSettings = const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          // distanceFilter: 100, // Optional
+        );
+      }
+
+      Position position =
+          await Geolocator.getPositionStream(locationSettings: locationSettings)
+              .timeout(
+                const Duration(seconds: 20),
+              ) // Apply timeout to the stream
+              .first;
       _logger.i(
         "Location fetched: ${position.latitude}, ${position.longitude}",
       );
@@ -66,32 +148,42 @@ class _EmergencyPageState extends State<EmergencyPage> {
           '0542845581'; // TODO: Replace with a dynamic contact from settings
       _logger.i("Preparing SOS for $contact: $message");
 
-      final Uri smsLaunchUri = Uri(
-        scheme: 'sms',
-        path: contact,
-        queryParameters: <String, String>{'body': message},
+      // Always use url_launcher to open the default SMS app
+      await _launchSmsWithUrlLauncher(contact, message);
+    } on PlatformException catch (e, s) {
+      _logger.e(
+        "Platform error during SOS: ${e.message}",
+        error: e,
+        stackTrace: s,
       );
-
-      if (await canLaunchUrl(smsLaunchUri)) {
-        await launchUrl(smsLaunchUri);
-        _showSuccessSnackbar(
-          'SOS prepared. Please send the message via your SMS app.',
-        );
-      } else {
-        _showErrorSnackbar('Could not open SMS app. Is one installed?');
-      }
-    } on PlatformException catch (e) {
-      _logger.e("Platform error during SOS: ${e.message}");
-      _showErrorSnackbar('Permission error: ${e.message}');
-    } catch (e) {
-      _logger.e("Error sending SOS: $e");
-      _showErrorSnackbar('Failed to send SOS. Please try again. Error: $e');
+      _showErrorSnackbar('SOS failed due to a platform issue: ${e.message}');
+    } catch (e, s) {
+      _logger.e("Error sending SOS: $e", error: e, stackTrace: s);
+      _showErrorSnackbar('Failed to send SOS. An unexpected error occurred.');
     } finally {
       if (mounted) {
         setState(() {
           _isSendingSos = false;
         });
       }
+    }
+  }
+
+  Future<void> _launchSmsWithUrlLauncher(String contact, String message) async {
+    _logger.i("Launching SMS app with pre-filled message for $contact.");
+    final Uri smsLaunchUri = Uri(
+      scheme: 'sms',
+      path: contact,
+      queryParameters: <String, String>{'body': message},
+    );
+
+    if (await canLaunchUrl(smsLaunchUri)) {
+      await launchUrl(smsLaunchUri);
+      _showSuccessSnackbar(
+        'SOS prepared. Please confirm and send the message via your SMS app.',
+      );
+    } else {
+      _showErrorSnackbar('Could not open SMS app. Is one installed?');
     }
   }
 
@@ -207,8 +299,8 @@ class _EmergencyPageState extends State<EmergencyPage> {
               'This will send your location to emergency contacts',
               style: textTheme.bodySmall?.copyWith(
                 // Use textTheme
-                color: colorScheme.onSurface.withOpacity(
-                  0.7,
+                color: colorScheme.onSurface.withAlpha(
+                  (0.7 * 255).round(),
                 ), // Themed text color with opacity
               ), // Themed text color with opacity
               textAlign: TextAlign.center,

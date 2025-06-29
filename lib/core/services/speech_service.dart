@@ -63,13 +63,14 @@ class SpeechService extends ChangeNotifier {
   Completer<void>?
   _microphoneReleaseCompleter; // Use a Completer for explicit release signal
   static const Duration _microphoneReleaseDelay = Duration(
-    milliseconds: 2000,
+    milliseconds: 500,
   ); // Increased delay
 
   // Configuration for improved listening
   static const Duration _maxSilenceDuration = Duration(
-    seconds: 6,
-  ); // Adjusted silence tolerance for conversational flow
+    seconds: 10,
+  ); // Maximum silence duration before considering an utterance complete.
+  // This is crucial for conversational flow, allowing for natural pauses.
   static const Duration _extendedListenDuration = Duration(
     minutes: 2,
   ); // Longer total listening time
@@ -113,7 +114,7 @@ class SpeechService extends ChangeNotifier {
   String get recognizedText => _recognizedText;
   String get finalRecognizedText => _finalRecognizedText;
   double get currentVolume => _currentVolume;
-  double get currentSpeechRate => 0.5;
+  double get currentSpeechRate => _currentSpeechRate;
   double get currentPitch => _currentPitch;
 
   // Private constructor for singleton
@@ -207,6 +208,17 @@ class SpeechService extends ChangeNotifier {
       _speakingStatusController.add(false);
       _logger.d("TTS: Finished speaking.");
       _setMicrophoneInUse(false, "TTS completion"); // Release microphone
+      // NEW: Reset TTS language to default after speaking completes
+      _flutterTts
+          .setLanguage("en-US")
+          .then((_) {
+            _logger.d(
+              "TTS: Language reset to default (en-US) after completion.",
+            );
+          })
+          .catchError((e) {
+            _logger.e("TTS: Error resetting language to default: $e");
+          });
       notifyListeners();
       // After speaking finishes, we might want to automatically listen for follow-up
       // This logic will be handled by ChatState based on this status change.
@@ -451,7 +463,7 @@ class SpeechService extends ChangeNotifier {
     if (_isListeningStt) {
       _logger.w("STT: Already listening. Stopping current session first.");
       await stopListening();
-      await Future.delayed(const Duration(milliseconds: 300)); // Small buffer
+      await Future.delayed(const Duration(milliseconds: 100)); // Small buffer
     }
 
     // Clear previous results before starting a new session
@@ -483,11 +495,21 @@ class SpeechService extends ChangeNotifier {
           _resetSilenceTimer(continuous);
 
           if (result.finalResult) {
-            _finalRecognizedText = result.recognizedWords;
-            _finalRecognizedTextController.add(_finalRecognizedText);
-            _logger.i("STT: Final result: '$_finalRecognizedText'");
-            // In non-continuous mode, stop immediately on final result
+            // In continuous mode, a final result from the STT engine just means a pause was detected.
+            // We do NOT treat this as the end of the user's command. Instead, we wait for our
+            // own silence timer (_maxSilenceDuration) to expire before we consider the command complete.
+            // The _recognizedText is already updated with the latest words, so we just log it.
+            _logger.i(
+              "STT: Received a final segment in continuous mode: '$_recognizedText'",
+            );
+
+            // In NON-continuous mode, a final result IS the end of the command, so we process it immediately.
             if (!continuous) {
+              _finalRecognizedText = result.recognizedWords;
+              _finalRecognizedTextController.add(_finalRecognizedText);
+              _logger.i(
+                "STT: Final result (non-continuous): '$_finalRecognizedText'",
+              );
               stopListening();
             }
           }
@@ -567,6 +589,10 @@ class SpeechService extends ChangeNotifier {
     _silenceTimer?.cancel();
     _silenceTimer = Timer(_maxSilenceDuration, () {
       if (_isListeningStt) {
+        // If the silence timer expires, it means the user has paused for longer than
+        // _maxSilenceDuration. We then consider the current recognized text as final
+        // and stop the listening session. This prevents the microphone from staying
+        // open indefinitely if the user stops talking.
         _logger.i("STT: Stopping due to extended silence.");
         // If there was any recognized text (even partial) before silence, send it as final
         if (_recognizedText.isNotEmpty) {
@@ -585,15 +611,12 @@ class SpeechService extends ChangeNotifier {
   }
 
   void _resetSilenceTimer(bool continuous) {
-    // We only actively manage the _silenceTimer for non-continuous listening
-    // or when we want to enforce an explicit timeout after an utterance
-    // in continuous mode. For a purely conversational continuous mode,
-    // the STT engine's internal `pauseFor` might be sufficient.
-    // However, to ensure a smooth transition back to wake word if the user
-    // simply stops talking, our silence timer is useful.
-    // If it's a manual continuous session, keep extending the silence timer
-    // with each new recognized word to allow for natural conversation pauses.
-    // If it's a one-shot (not continuous), then _startSilenceTimer handles it.
+    // This function is called whenever new speech is recognized (even partial).
+    // Its purpose is to reset the silence timer, effectively extending the
+    // listening window as long as the user continues to speak or makes short pauses.
+    // For non-continuous mode, _startSilenceTimer is called once at the beginning.
+    // For continuous mode, we continuously reset the timer to allow for longer
+    // conversational turns.
     if (continuous) {
       _silenceTimer?.cancel(); // Cancel previous timer
       _silenceTimer = Timer(_maxSilenceDuration, () {
@@ -688,11 +711,12 @@ class SpeechService extends ChangeNotifier {
       // Wait for microphone to be fully released
       await _waitForMicrophoneRelease();
 
+      //"eamXBsg264uAMfz7FIxXgFFZz4dzQAxP79gAaVkiXippS9W+vehXTA==", // Your Picovoice access key
       // Initialize Porcupine with custom wake word
       _porcupineManager = await PorcupineManager.fromKeywordPaths(
-        "FJ3CNOTKkH9oBhjMCp20gq/dK4JR6sKuwLDVv1UXxs7Fy+TqcaUuRQ==", // Your Picovoice access key
+        "eamXBsg264uAMfz7FIxXgFFZz4dzQAxP79gAaVkiXippS9W+vehXTA==",
         [
-          "assets/ml/Assistive-lens_en_android_v3_0_0.ppn",
+          "assets/ml/hey-teddy_en_android_v3_0_0.ppn",
         ], // Custom wake word model path (keywordIndex)
         (keywordIndex) {
           _handleWakeWordDetection(keywordIndex);
@@ -767,7 +791,8 @@ class SpeechService extends ChangeNotifier {
         "Wake Word: Max initialization retries reached. Wake word detection permanently disabled.",
       );
       throw PorcupineInitializationException(
-          "Max retries reached for Porcupine initialization. Error: $error");
+        "Max retries reached for Porcupine initialization. Error: $error",
+      );
     }
   }
 

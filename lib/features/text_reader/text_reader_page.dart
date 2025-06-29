@@ -1,5 +1,7 @@
 // lib/features/text_reader/text_reader_page.dart
 import 'dart:io'; // Required for File
+import 'package:assist_lens/core/routing/app_router.dart';
+import 'package:assist_lens/features/aniwa_chat/state/chat_state.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -79,7 +81,9 @@ class _TextReaderPageState extends State<TextReaderPage>
     if (_isDisposing) return;
 
     _textReaderState = Provider.of<TextReaderState>(context, listen: false);
-
+context.read<ChatState>().updateCurrentRoute(
+      AppRouter.aniwaChat,
+    ); 
     // Subscribe to RouteObserver
     final route = ModalRoute.of(context);
     if (route is PageRoute) {
@@ -97,7 +101,7 @@ class _TextReaderPageState extends State<TextReaderPage>
   /// Initialize all page resources
   void _initializePageResources() {
     if (_isDisposing || !_isPageActive) return;
-
+    context.read<ChatState>().updateCurrentRoute(AppRouter.aniwaChat);
     // Initialize camera with a small delay to ensure proper context
     Future.delayed(const Duration(milliseconds: 100), () {
       if (!_isDisposing && _isPageActive && mounted) {
@@ -176,6 +180,10 @@ class _TextReaderPageState extends State<TextReaderPage>
 
   @override
   void didPush() {
+    context.read<ChatState>().updateCurrentRoute(
+      AppRouter.aniwaChat,
+    ); // or the correct route
+    super.didPush();
     // Called when this page is pushed onto the navigation stack
     _isPageActive = true;
   }
@@ -702,128 +710,16 @@ class _TextReaderPageState extends State<TextReaderPage>
                                 ),
                                 const SizedBox(height: 24),
 
-                                // Speak Current Text Button (Unified)
-                                if (state.hasText &&
-                                    !state.isAnyProcessingActive &&
-                                    !state.isSpeaking &&
-                                    _isPageActive)
-                                  Center(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 20.0,
-                                      ),
-                                      child: ElevatedButton.icon(
-                                        onPressed: state.speakCurrentText,
-                                        icon: Icon(
-                                          Icons.volume_up_rounded,
-                                          color: colorScheme.onPrimary,
-                                        ),
-                                        label: Text(
-                                          'Speak Current Text',
-                                          style: textTheme.labelLarge?.copyWith(
-                                            color: colorScheme.onPrimary,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: colorScheme.primary,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              12,
-                                            ),
-                                          ),
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 24,
-                                            vertical: 14,
-                                          ),
-                                          elevation: 5,
-                                          shadowColor: colorScheme.primary
-                                              .withAlpha((0.3 * 255).round()),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                if (state.isSpeaking && _isPageActive)
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                          bottom: 20.0,
-                                        ),
-                                        child: ElevatedButton.icon(
-                                          onPressed: state.stopSpeaking,
-                                          icon: Icon(
-                                            Icons.volume_off_rounded,
-                                            color: colorScheme.onPrimary,
-                                          ),
-                                          label: Text(
-                                            'Stop Speaking',
-                                            style: textTheme.labelLarge
-                                                ?.copyWith(
-                                                  color: colorScheme.onPrimary,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                          ),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: colorScheme.primary
-                                                .withAlpha((0.7 * 255).round()),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                            ),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 24,
-                                              vertical: 14,
-                                            ),
-                                            elevation: 5,
-                                            shadowColor: colorScheme.primary
-                                                .withAlpha((0.3 * 255).round()),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                if (state.hasText)
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                      bottom: 20.0,
-                                    ),
-                                    child: ElevatedButton.icon(
-                                      onPressed: state.correctText,
-                                      icon: Icon(
-                                        Icons.volume_off_rounded,
-                                        color: colorScheme.onPrimary,
-                                      ),
-                                      label: Text(
-                                        'Correct Text',
-                                        style: textTheme.labelLarge?.copyWith(
-                                          color: colorScheme.onPrimary,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: colorScheme.primary
-                                            .withAlpha((0.7 * 255).round()),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 30,
-                                          vertical: 14,
-                                        ),
-                                        elevation: 5,
-                                        shadowColor: colorScheme.primary
-                                            .withAlpha((0.3 * 255).round()),
-                                      ),
-                                    ),
-                                  ),
+                                // Action Buttons (Speak, Correct, Send to Chat, Clear Captured Image)
+                                _buildActionButtons(
+                                  state,
+                                  colorScheme,
+                                  textTheme,
+                                ),
 
                                 // Translate Actions
-                                if (state.correctedText.isNotEmpty &&
+                                if ((state.correctedText.isNotEmpty ||
+                                        state.recognizedText.isNotEmpty) &&
                                     !state.isAnyProcessingActive &&
                                     _isPageActive)
                                   Column(
@@ -960,9 +856,12 @@ class _TextReaderPageState extends State<TextReaderPage>
                                                   state.isTranslating ||
                                                           _selectedTargetLanguage ==
                                                               null ||
-                                                          state
-                                                              .correctedText
-                                                              .isEmpty ||
+                                                          (state
+                                                                  .correctedText
+                                                                  .isEmpty &&
+                                                              state
+                                                                  .recognizedText
+                                                                  .isEmpty) || // Ensure there's text to translate
                                                           !_isPageActive
                                                       ? null
                                                       : () => state.translateText(
@@ -1052,6 +951,196 @@ class _TextReaderPageState extends State<TextReaderPage>
               FloatingActionButtonLocation.centerFloat,
         );
       },
+    );
+  }
+
+  // New helper method to build action buttons
+  Widget _buildActionButtons(
+    TextReaderState state,
+    ColorScheme colorScheme,
+    TextTheme textTheme,
+  ) {
+    return Column(
+      children: [
+        // Speak/Stop Speaking Button
+        if (state.hasText &&
+            !state.isAnyProcessingActive &&
+            !state.isSpeaking &&
+            _isPageActive)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: state.speakCurrentText,
+                icon: Icon(
+                  Icons.volume_up_rounded,
+                  color: colorScheme.onPrimary,
+                ),
+                label: Text(
+                  'Speak Current Text',
+                  style: textTheme.labelLarge?.copyWith(
+                    color: colorScheme.onPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 14,
+                  ),
+                  elevation: 5,
+                  shadowColor: colorScheme.primary.withAlpha(
+                    (0.3 * 255).round(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (state.isSpeaking && _isPageActive)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: state.stopSpeaking,
+                icon: Icon(
+                  Icons.volume_off_rounded,
+                  color: colorScheme.onPrimary,
+                ),
+                label: Text(
+                  'Stop Speaking',
+                  style: textTheme.labelLarge?.copyWith(
+                    color: colorScheme.onPrimary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: colorScheme.primary.withAlpha(
+                    (0.7 * 255).round(),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 14,
+                  ),
+                  elevation: 5,
+                  shadowColor: colorScheme.primary.withAlpha(
+                    (0.3 * 255).round(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+        // Correct Text and Send to Chat Buttons
+        if (state.hasText && !state.isAnyProcessingActive && _isPageActive)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12.0),
+            child: Wrap(
+              spacing: 12.0, // horizontal space
+              runSpacing: 12.0, // vertical space
+              alignment: WrapAlignment.center,
+              children: [
+                // Correct Text Button
+                ElevatedButton.icon(
+                  onPressed: state.correctText,
+                  icon: Icon(
+                    Icons.auto_fix_high_rounded,
+                    color: colorScheme.onSecondary,
+                  ),
+                  label: Text(
+                    'Correct Text',
+                    style: textTheme.labelLarge?.copyWith(
+                      color: colorScheme.onSecondary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: colorScheme.secondary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    elevation: 5,
+                    shadowColor: colorScheme.secondary.withAlpha(
+                      (0.3 * 255).round(),
+                    ),
+                  ),
+                ),
+
+                // Send to Chat Button
+                ElevatedButton.icon(
+                  onPressed: state.hasText ? () => state.sendToChat() : null,
+                  icon: Icon(Icons.send_rounded, color: colorScheme.onTertiary),
+                  label: Text(
+                    'Send to Chat',
+                    style: textTheme.labelLarge?.copyWith(
+                      color: colorScheme.onTertiary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: colorScheme.tertiary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    elevation: 5,
+                    shadowColor: colorScheme.tertiary.withAlpha(
+                      (0.3 * 255).round(),
+                    ),
+                  ),
+                ),
+
+                // Clear Captured Image Button (only if an image is captured)
+                if (state.capturedImagePath != null &&
+                    !state.isAnyProcessingActive)
+                  ElevatedButton.icon(
+                    onPressed: state.clearResults,
+                    icon: Icon(
+                      Icons.refresh_rounded,
+                      color: colorScheme.onError,
+                    ),
+                    label: Text(
+                      'Retake Photo',
+                      style: textTheme.labelLarge?.copyWith(
+                        color: colorScheme.onError,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colorScheme.error,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 14,
+                      ),
+                      elevation: 5,
+                      shadowColor: colorScheme.error.withAlpha(
+                        (0.3 * 255).round(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 16), // Spacing before translation section
+      ],
     );
   }
 }

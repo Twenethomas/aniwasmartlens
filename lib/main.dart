@@ -1,5 +1,7 @@
 // main.dart
-import 'package:assist_lens/core/services/face_database_helper.dart' show FaceDatabaseHelper;
+import 'package:assist_lens/core/services/face_database_helper.dart'
+    show FaceDatabaseHelper;
+import 'package:assist_lens/features/object_detection/object_detection_state.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -16,8 +18,9 @@ import 'core/services/face_recognizer_service.dart';
 import 'core/services/text_reader_service.dart';
 import 'core/services/history_services.dart';
 import 'core/services/chat_service.dart';
-import 'core/services/speech_service.dart' show PorcupineInitializationException; // Import the custom exception
+// Import the custom exception
 import 'core/services/camera_service.dart'; // NEW: Import CameraService
+import 'core/services/raspberry_pi_service.dart'; // NEW: Import RaspberryPiService
 
 // Import your pages/states
 import 'state/app_state.dart';
@@ -26,6 +29,8 @@ import 'features/face_recognition/facial_recognition_state.dart';
 import 'features/scene_description/scene_description_state.dart';
 import 'features/emergency/emergency_state.dart';
 import 'features/text_reader/text_reader_state.dart';
+// NEW: Import SettingsPage
+import 'features/settings/state/settings_state.dart'; // NEW: Import SettingsState
 
 // Global logger instance
 final logger = Logger(
@@ -48,7 +53,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 /// Main entry point for the Assist Lens application.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  bool criticalServicesInitialized = true;
+  bool wakeWordInitializedSuccessfully = true;
 
   try {
     final prefs = await SharedPreferences.getInstance();
@@ -72,147 +77,177 @@ void main() async {
     final speechService = SpeechService();
     try {
       await speechService.init(); // Initialize speech service here
-    } on PorcupineInitializationException catch (e) { // Catch specific exception
-      logger.f("FATAL: Wake Word (Porcupine) initialization failed: $e. Application will not start.");
-      criticalServicesInitialized = false;
-      rethrow; // Rethrow to cause a crash or halt
+    } on PorcupineInitializationException catch (e) {
+      // Catch specific exception
+      logger.e(
+        "Wake Word (Porcupine) initialization failed: $e. App will continue without wake word functionality.",
+      );
+      wakeWordInitializedSuccessfully =
+          false; // Indicate wake word failed but app can continue
     }
-
 
     final historyService = HistoryService(prefs);
     await historyService.init();
 
     final geminiService = GeminiService(networkService);
-    final faceDatabaseHelper = FaceDatabaseHelper(); // Instantiate FaceDatabaseHelper
+    final faceDatabaseHelper =
+        FaceDatabaseHelper(); // Instantiate FaceDatabaseHelper
     final faceRecognizerService = FaceRecognizerService(
-        faceDatabaseHelper: faceDatabaseHelper); // Provide DB helper here
+      faceDatabaseHelper: faceDatabaseHelper,
+    ); // Provide DB helper here
     final textReaderService = TextReaderServices();
     final cameraService = CameraService(); // NEW: Initialize CameraService
+    final raspberryPiService =
+        RaspberryPiService(); // NEW: Initialize RaspberryPiService
+
     // Load face recognition model on startup
     await faceRecognizerService.loadModel();
-    
-    if (criticalServicesInitialized) {
-      runApp(
-        MultiProvider(
-          providers: [
-            // Core app state
-            ChangeNotifierProvider<AppState>(create: (_) => AppState(prefs)),
 
-            // Core services
-            ChangeNotifierProvider<NetworkService>.value(value: networkService),
-            ChangeNotifierProvider<SpeechService>.value(value: speechService),
-            ChangeNotifierProvider<HistoryService>.value(value: historyService),
-            Provider<GeminiService>.value(value: geminiService),
-            Provider<FaceRecognizerService>.value(value: faceRecognizerService),
-            Provider<TextReaderServices>.value(value: textReaderService),
-            ChangeNotifierProvider<CameraService>.value(
-              value: cameraService,
-            ), // NEW: Provide CameraService
-            Provider<FaceDatabaseHelper>.value(
-                value: faceDatabaseHelper), // Provide FaceDatabaseHelper
-            // Chat state with proper dependency injection
-            ChangeNotifierProvider<ChatState>(
-              create: (context) {
-                final speech = context.read<SpeechService>();
-                final gemini = context.read<GeminiService>();
-                final history = context.read<HistoryService>();
-                final network = context.read<NetworkService>();
+    // App can run even if wake word failed, ChatState will handle the UI/UX for this.
+    runApp(
+      MultiProvider(
+        providers: [
+          // Core app state
+          ChangeNotifierProvider<AppState>(create: (_) => AppState(prefs)),
 
-                final chatState = ChatState(speech, gemini, history, network);
+          // Core services
+          ChangeNotifierProvider<NetworkService>.value(value: networkService),
+          ChangeNotifierProvider<SpeechService>.value(value: speechService),
+          ChangeNotifierProvider<HistoryService>.value(value: historyService),
+          Provider<GeminiService>.value(value: geminiService),
+          Provider<FaceRecognizerService>.value(value: faceRecognizerService),
+          Provider<TextReaderServices>.value(value: textReaderService),
+          ChangeNotifierProvider<CameraService>.value(
+            value: cameraService,
+          ), // NEW: Provide CameraService
+          ChangeNotifierProvider<RaspberryPiService>.value(
+            value: raspberryPiService,
+          ),
+          Provider<FaceDatabaseHelper>.value(
+            value: faceDatabaseHelper,
+          ), // Provide FaceDatabaseHelper
+          // Chat state with proper dependency injection
+          ChangeNotifierProvider<ChatState>(
+            create: (context) {
+              final speech = context.read<SpeechService>();
+              final gemini = context.read<GeminiService>();
+              final history = context.read<HistoryService>();
+              final network = context.read<NetworkService>();
 
-                // Set the navigation callback for ChatState
-                chatState.onNavigateRequested = (routeName, {arguments}) {
-                  if (navigatorKey.currentState != null &&
-                      navigatorKey.currentState!.mounted) {
-                    navigatorKey.currentState!.pushNamed(
-                      routeName,
-                      arguments: arguments,
-                    );
-                  } else {
-                    logger.w(
-                      "Navigator state not available for navigation to $routeName.",
-                    );
+              final chatState = ChatState(speech, gemini, history, network);
+
+              // Set the navigation callback for ChatState
+              chatState.onNavigateRequested = (routeName, {arguments}) {
+                if (navigatorKey.currentState != null &&
+                    navigatorKey.currentState!.mounted) {
+                  navigatorKey.currentState!.pushNamed(
+                    routeName,
+                    arguments: arguments,
+                  );
+                } else {
+                  logger.w(
+                    "Navigator state not available for navigation to $routeName.",
+                  );
+                }
+              };
+
+              // Initialize ChatService with proper callbacks AFTER ChatState is created
+              chatState.chatService = ChatService(
+                speech,
+                gemini,
+                history,
+                network,
+                onProcessingStatusChanged: chatState.setIsProcessingAI,
+                onSpeak: chatState.speak,
+                onVibrate: () async {
+                  if (await Vibration.hasVibrator() ?? false) {
+                    Vibration.vibrate(duration: 50);
                   }
-                };
+                },
+                // The onNavigate for ChatService should call ChatState's navigateTo method
+                onNavigate: chatState.navigateTo,
+                onAddUserMessage:
+                    chatState.addUserMessage, // Pass callback for user messages
+                onAddAssistantMessage:
+                    chatState
+                        .addAssistantMessage, // Pass callback for assistant messages
+              );
 
-                // Initialize ChatService with proper callbacks AFTER ChatState is created
-                chatState.chatService = ChatService(
-                  speech,
-                  gemini,
-                  history,
-                  network,
-                  onProcessingStatusChanged: chatState.setIsProcessingAI,
-                  onSpeak: chatState.speak,
-                  onVibrate: () async {
-                    if (await Vibration.hasVibrator() ?? false) {
-                      Vibration.vibrate(duration: 50);
-                    }
-                  },
-                  // The onNavigate for ChatService should call ChatState's navigateTo method
-                  onNavigate: chatState.navigateTo,
-                  onAddUserMessage:
-                      chatState.addUserMessage, // Pass callback for user messages
-                  onAddAssistantMessage:
-                      chatState
-                          .addAssistantMessage, // Pass callback for assistant messages
-                );
+              return chatState;
+            },
+          ),
 
-                return chatState;
-              },
-            ),
+          // Feature states
+          ChangeNotifierProvider<FacialRecognitionState>(
+            create:
+                (context) => FacialRecognitionState(
+                  networkService: context.read<NetworkService>(),
+                  speechService: context.read<SpeechService>(),
+                  faceRecognizerService: context.read<FaceRecognizerService>(),
+                  cameraService: context.read<CameraService>(),
+                  faceDatabaseHelper:
+                      context
+                          .read<
+                            FaceDatabaseHelper
+                          >(), // NEW: Inject CameraService
+                ),
+          ),
+          ChangeNotifierProvider<SceneDescriptionState>(
+            create:
+                (context) => SceneDescriptionState(
+                  context.read<NetworkService>(),
+                  context.read<SpeechService>(), // NEW: Inject CameraService
+                  context.read<GeminiService>(),
+                  context.read<CameraService>(),
+                  context.read<HistoryService>(),
+                ),
+          ),
+          ChangeNotifierProvider<ObjectDetectionState>(
+            create:
+                (context) =>
+                    ObjectDetectionState(context.read<CameraService>()),
+          ),
 
-            // Feature states
-            ChangeNotifierProvider<FacialRecognitionState>(
-              create:
-                  (context) => FacialRecognitionState(
-                    networkService: context.read<NetworkService>(),
-                    speechService: context.read<SpeechService>(),
-                    faceRecognizerService: context.read<FaceRecognizerService>(),
-                    cameraService:
-                        context
-                            .read<CameraService>(), 
-                    faceDatabaseHelper:context.read<FaceDatabaseHelper>() , // NEW: Inject CameraService
-                  ),
-            ),
-            ChangeNotifierProvider<SceneDescriptionState>(
-              create:
-                  (context) => SceneDescriptionState(
-                    context.read<NetworkService>(),
-                    context.read<SpeechService>(), // NEW: Inject CameraService
-                    context.read<GeminiService>(),
-                    context.read<CameraService>(),
-                  ),
-            ),
-            ChangeNotifierProvider<EmergencyState>(
-              create: (_) => EmergencyState(),
-            ),
-            ChangeNotifierProvider<TextReaderState>(
-              create:
-                  (context) => TextReaderState(
-                    speechService: context.read<SpeechService>(),
-                    geminiService: context.read<GeminiService>(),
-                    networkService: context.read<NetworkService>(),
-                    historyService: context.read<HistoryService>(),
-                    textReaderService: context.read<TextReaderServices>(),
-                    cameraService:
-                        context
-                            .read<CameraService>(), // NEW: Inject CameraService
-                  ),
-            ),
-          ],
-          child: const AssistLensApp(),
-        ),
-      );
-    } else {
-      // If critical services failed, run the ErrorApp or simply don't run the main app.
-      // The rethrow should ideally handle the "crush" part.
-      logger.f("Not running AssistLensApp due to critical initialization failure.");
-      runApp(const ErrorApp(message: "Critical component (Wake Word) failed to initialize. App cannot start."));
-    }
-  } catch (e, s) { // Catch any exception from the main try block, including rethrown ones
-    logger.f('FATAL: Unhandled exception during app initialization: $e', error: e, stackTrace: s);
+          ChangeNotifierProvider<EmergencyState>(
+            create: (_) => EmergencyState(),
+          ),
+          ChangeNotifierProvider<TextReaderState>(
+            create:
+                (context) => TextReaderState(
+                  speechService: context.read<SpeechService>(),
+                  geminiService: context.read<GeminiService>(),
+                  networkService: context.read<NetworkService>(),
+                  historyService: context.read<HistoryService>(),
+                  textReaderService: context.read<TextReaderServices>(),
+                  cameraService:
+                      context
+                          .read<CameraService>(), // NEW: Inject CameraService
+                ),
+          ),
+          // NEW: Add SettingsState provider
+          ChangeNotifierProvider<SettingsState>(
+            create:
+                (context) => SettingsState(
+                  speechService: context.read<SpeechService>(),
+                  appState: context.read<AppState>(),
+                  historyService: context.read<HistoryService>(),
+                ),
+          ),
+        ],
+        child: const AssistLensApp(),
+      ),
+    );
+  } catch (e, s) {
+    // Catch any exception from the main try block, including rethrown ones
+    logger.f(
+      'FATAL: Unhandled exception during app initialization: $e',
+      error: e,
+      stackTrace: s,
+    );
     // You might want to show an error screen here
-    runApp(ErrorApp(message: "A critical error occurred during app startup: $e"));
+    runApp(
+      ErrorApp(message: "A critical error occurred during app startup: $e"),
+    );
   }
 }
 
