@@ -721,9 +721,9 @@ class SpeechService extends ChangeNotifier {
       //"eamXBsg264uAMfz7FIxXgFFZz4dzQAxP79gAaVkiXippS9W+vehXTA==", // Your Picovoice access key
       // Initialize Porcupine with custom wake word
       _porcupineManager = await PorcupineManager.fromKeywordPaths(
-        "eamXBsg264uAMfz7FIxXgFFZz4dzQAxP79gAaVkiXippS9W+vehXTA==",
+        "FJ3CNOTKkH9oBhjMCp20gq/dK4JR6sKuwLDVv1UXxs7Fy+TqcaUuRQ==",
         [
-          "assets/ml/hey-teddy_en_android_v3_0_0.ppn",
+          "assets/ml/Hey-Codex_en_android_v3_0_0.ppn",
         ], // Custom wake word model path (keywordIndex)
         (keywordIndex) {
           _handleWakeWordDetection(keywordIndex);
