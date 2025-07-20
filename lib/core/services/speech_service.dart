@@ -715,6 +715,7 @@ class SpeechService extends ChangeNotifier {
         notifyListeners();
         return;
       }
+      
       // Wait for microphone to be fully released
       await _waitForMicrophoneRelease();
 
